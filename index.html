@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#101217">
+  <meta name="description" content="Stronglifts 5x5 session tracker">
+  <title>Lift Log</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main id="app"></main>
+
+  <div id="timer" class="timer" hidden>
+    <div class="timer-fill"></div>
+    <div class="timer-row">
+      <div class="timer-text"><div class="timer-label"></div><div class="timer-time"></div></div>
+      <button data-action="timer-add">+30s</button>
+      <button data-action="timer-stop" aria-label="Stop timer">✕</button>
+    </div>
+  </div>
+
+  <nav class="tabs">
+    <button data-action="view" data-view="today">Today</button>
+    <button data-action="view" data-view="history">History</button>
+    <button data-action="view" data-view="settings">Settings</button>
+  </nav>
+
+  <div id="modal" hidden></div>
+  <div id="toast" role="status"></div>
+
+  <script src="program.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
