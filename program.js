@@ -34,16 +34,19 @@ window.PROGRAM = {
   schedule: { 1: 'lift', 2: 'walk', 3: 'lift', 4: 'hiit', 5: 'lift' },
   hiitFrom: '2026-10-08',
 
+  // Treadmill sessions are guided segment by segment in the app.
   walk: {
-    steps: ['5 min @ 4 kph', '25 min @ 5 kph', '5 min @ 4 kph'],
-    minutes: 35,
+    segments: [
+      { label: 'Warm-up', min: 5, speed: 4 },
+      { label: 'Steady walk', min: 25, speed: 5 },
+      { label: 'Cool-down', min: 5, speed: 4 },
+    ],
   },
   hiit: {
     rounds: 8,                  // adjustable in Settings as it increases
-    hardSec: 30, easySec: 90,
-    warmup: '5 min warm-up @ 5 kph',
-    hard: 'Hard: jog 7–8 kph, or fast walk at 8–10% incline',
-    easy: 'Easy: walk @ 5 kph',
-    cooldown: '5 min cool-down @ 4 kph',
+    hardSec: 30, easySec: 90, easySpeed: 5,
+    warmup: { min: 5, speed: 5 },
+    cooldown: { min: 5, speed: 4 },
+    hardHint: 'jog 7–8 kph, or fast walk at 8–10% incline',
   },
 };

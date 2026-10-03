@@ -1,5 +1,5 @@
 // Offline cache for the app shell. Bump CACHE whenever any file changes so phones pick up the update.
-const CACHE = 'lift-log-v1';
+const CACHE = 'lift-log-v2';
 const FILES = ['./', 'index.html', 'styles.css', 'program.js', 'app.js', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png'];
 

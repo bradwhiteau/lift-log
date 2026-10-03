@@ -16,16 +16,19 @@ function doPost(e) {
 
   const ss = spreadsheet_();
   if (body.action === 'ping') return out_({ ok: true, message: 'Connected to "' + ss.getName() + '"' });
-  if (body.action !== 'upsert' || !body.session || !body.session.id) return out_({ ok: false, error: 'Unknown action' });
+  const isUpsert = body.action === 'upsert' && body.session && body.session.id;
+  const isDelete = body.action === 'delete' && body.id;
+  if (!isUpsert && !isDelete) return out_({ ok: false, error: 'Unknown action — redeploy the latest Code.gs' });
 
   const lock = LockService.getScriptLock();
   lock.waitLock(30000);
   try {
-    const id = body.session.id;
-    upsertRows_(ss, 'Sessions', id, body.sessionRow ? [body.sessionRow] : []);
-    upsertRows_(ss, 'Sets', id, body.setRows || []);
+    const id = isUpsert ? body.session.id : body.id;
+    // Upserting with no rows removes the session's rows, which is exactly what delete needs.
+    upsertRows_(ss, 'Sessions', id, isUpsert && body.sessionRow ? [body.sessionRow] : []);
+    upsertRows_(ss, 'Sets', id, isUpsert ? body.setRows || [] : []);
     if (body.state) writeState_(ss, body.state);
-    writeJson_(ss, body.session, body.state);
+    writeJson_(ss, id, isUpsert ? body.session : null, body.state);
     return out_({ ok: true, id: id });
   } catch (err) {
     return out_({ ok: false, error: String((err && err.message) || err) });
@@ -97,15 +100,16 @@ function writeState_(ss, state) {
     ['as_of', state.as_of], ['program_version', state.program_version], ['deadlift_sets', state.deadlift_sets]]);
 }
 
-function writeJson_(ss, session, state) {
+/** Replaces (or, when session is null, removes) the session with this id in lift-log.json. */
+function writeJson_(ss, id, session, state) {
   const folder = folder_(ss);
   const files = folder.getFilesByName(JSON_FILE_NAME);
   const file = files.hasNext() ? files.next() : null;
   let doc = {};
   if (file) { try { doc = JSON.parse(file.getBlob().getDataAsString()); } catch (e) { doc = {}; } }
 
-  const list = (doc.sessions || []).filter(function (s) { return s.id !== session.id; });
-  list.push(session);
+  const list = (doc.sessions || []).filter(function (s) { return s.id !== id; });
+  if (session) list.push(session);
   list.sort(function (a, b) {
     const ka = a.date + (a.startedAt || ''), kb = b.date + (b.startedAt || '');
     return ka < kb ? -1 : ka > kb ? 1 : 0;

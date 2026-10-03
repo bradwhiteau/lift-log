@@ -24,7 +24,7 @@ Phone (Lift Log PWA)  ──POST──►  Apps Script web app  ──►  "Lift
    - Who has access: **Anyone** (the passphrase is what protects it)
 6. Click **Deploy** and copy the **Web app URL** (it ends in `/exec`).
 
-> If you change `Code.gs` later: **Deploy → Manage deployments →** edit (pencil icon) **→ Version: New version → Deploy**. The URL stays the same.
+> If you change `Code.gs` later (e.g. v1.1 added delete support): paste the new code over the old, **Save**, then **Deploy → Manage deployments →** edit (pencil icon) **→ Version: New version → Deploy**. The URL stays the same.
 
 ### 2. Host the app on GitHub Pages
 
@@ -45,7 +45,14 @@ Phone (Lift Log PWA)  ──POST──►  Apps Script web app  ──►  "Lift
   empty → **✓ easy** (90 s rest) → **✓ hard** (3 min) → **✗ failed** (asks how many reps, 5 min rest).
   Tap a failed set again to change its reps or clear it.
 - Tap the **weight** on an exercise to change it for today. Planned and actual weights are both logged.
+- **Treadmill walk / HIIT:** tap **Start session** and the app guides you segment by segment (big countdown, current speed, what's next).
+  It buzzes and beeps at every change, with a 3-2-1 countdown before each one. HIIT hard intervals turn the screen red.
+  Pause and Next segment are there if you need them. When the plan ends, Finish opens with the duration and rounds already filled in.
+  If you closed the app mid-session, it carries on from the right point when you reopen it.
 - **Finish** asks for Perceived Intensity (1–10), plus optional bodyweight and notes. **Skip session** records a reason.
+- **Sessions belong to their day.** If you leave one unfinished, a banner on later days says so. Tap it to go back to that day and finish, skip or discard it.
+  It never blocks today's session. For a past day with nothing logged, use **Log it now** or **Mark as skipped**.
+- **Edit / Delete** are on every saved session. Deleting also removes it from the Sheet and `lift-log.json`.
 - Next session's weights are calculated automatically. Settings → Working weights lets you override one, e.g. after the project agrees a deload.
 
 ## Changing the program
