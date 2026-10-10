@@ -7,6 +7,7 @@
  */
 const SYNC_TOKEN = 'CHANGE-ME';
 const JSON_FILE_NAME = 'lift-log.json';
+const PLAN_FILE_NAME = 'lift-log-plan.json';
 
 function doPost(e) {
   let body;
@@ -37,8 +38,21 @@ function doPost(e) {
   }
 }
 
-function doGet() {
-  return out_({ ok: true, service: 'Lift Log sync' });
+/**
+ * doGet?action=plan&token=… returns lift-log-plan.json from this Sheet's folder (written by the
+ * Brad's Fitness Claude project), or {} if there isn't one. Anything else is a health check.
+ */
+function doGet(e) {
+  const p = (e && e.parameter) || {};
+  if (p.action !== 'plan') return out_({ ok: true, service: 'Lift Log sync' });
+  if (SYNC_TOKEN === 'CHANGE-ME' || p.token !== SYNC_TOKEN) return out_({ ok: false, error: 'Wrong sync token' });
+  const files = folder_(spreadsheet_()).getFilesByName(PLAN_FILE_NAME);
+  if (!files.hasNext()) return out_({});
+  try {
+    return out_(JSON.parse(files.next().getBlob().getDataAsString()));
+  } catch (err) {
+    return out_({ ok: false, error: PLAN_FILE_NAME + ' is not valid JSON' });
+  }
 }
 
 /** Run once from the editor: authorises the script and creates the tabs. */

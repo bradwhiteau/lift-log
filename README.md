@@ -24,7 +24,7 @@ Phone (Lift Log PWA)  ──POST──►  Apps Script web app  ──►  "Lift
    - Who has access: **Anyone** (the passphrase is what protects it)
 6. Click **Deploy** and copy the **Web app URL** (it ends in `/exec`).
 
-> If you change `Code.gs` later (e.g. v1.1 added delete support): paste the new code over the old, **Save**, then **Deploy → Manage deployments →** edit (pencil icon) **→ Version: New version → Deploy**. The URL stays the same.
+> If you change `Code.gs` later (e.g. v1.1 added delete support, v1.2 the coach plan): paste the new code over the old, **Save**, then **Deploy → Manage deployments →** edit (pencil icon) **→ Version: New version → Deploy**. The URL stays the same.
 
 ### 2. Host the app on GitHub Pages
 
@@ -54,6 +54,8 @@ Phone (Lift Log PWA)  ──POST──►  Apps Script web app  ──►  "Lift
 - **Sessions belong to their day.** If you leave one unfinished, a banner on later days says so. Tap it to go back to that day and finish, skip or discard it.
   It never blocks today's session. For a past day with nothing logged, use **Log it now** or **Mark as skipped**.
 - **Edit / Delete** are on every saved session. Deleting also removes it from the Sheet and `lift-log.json`.
+- **Coach notes** from the Brad's Fitness project (see `lift-log-plan.json` below) appear at the top of the session screen.
+  Treadmill sessions also have a Notes box while you train; whatever you type there is carried into Finish.
 - Next session's weights are calculated automatically. Settings → Working weights lets you override one, e.g. after the project agrees a deload.
 
 ## Changing the program
@@ -66,9 +68,42 @@ Quick switches such as deadlift 1×5, the deadlift increment, micro-plates, HIIT
 
 | Where | Contents |
 |---|---|
-| Sheet → **Sessions** | One row per session: type, workout, week, program version, status/skip reason, start/end, duration, RPE, bodyweight, set counts, per-exercise summary, HIIT details, notes |
+| Sheet → **Sessions** | One row per session: type, workout, week, program version, status/skip reason, start/end, duration, RPE, bodyweight, set counts, per-exercise summary, HIIT details, notes, plan_id (the coach plan in force when the session started) |
 | Sheet → **Sets** | One row per set: planned/actual weight, target/actual reps, result (done/failed/not_done), effort (easy/hard), time logged |
 | Sheet → **State** | Current next working weight and failure streak for each lift |
 | `lift-log.json` | Full history in one file, with a description of the fields, for the Claude project |
 
 Re-syncing or editing a session replaces its rows, so nothing is duplicated. Settings → Data also has CSV exports and a full JSON backup/restore.
+
+### Coach plan: `lift-log-plan.json` (written by the Claude project, read by the app)
+
+The Brad's Fitness project sets next-session targets by writing **`lift-log-plan.json`** in the same Drive folder as the Lift Log Sheet.
+It must be a plain JSON file, not a Google Doc. The app fetches it through the sync script (`doGet?action=plan`) when it opens and on every sync.
+Settings → Google Drive sync shows when the plan was last updated, plus a **Refresh** link.
+
+```json
+{
+  "planId": "3f2b9c1e-…",
+  "updatedAt": "2026-10-12T09:00:00+08:00",
+  "note": "General note, shown on every session",
+  "hiit": { "hardMode": "jog", "hardSpeed": 8.0, "hardIncline": 0, "rounds": 8, "note": "…" },
+  "walk": { "note": "…" },
+  "lifts": { "ohp": { "nextWeightKg": 32.5, "incrementKg": 1.25, "note": "…" } }
+}
+```
+
+Every section and field is optional.
+
+| Field | Effect |
+|---|---|
+| `planId` | Unique id for this version of the plan. **Use a new one every time the lift targets change**, because lift overrides apply once per `planId`. |
+| `updatedAt` | Shown in Settings. |
+| `note` | Shown at the top of every session screen. |
+| `hiit.hardMode` / `hardSpeed` / `hardIncline` / `rounds` | Used for every new HIIT session while the plan is in place, instead of the previous session's values. `hardMode` is `jog` or `incline`. |
+| `hiit.note`, `walk.note` | Shown on that type of session. |
+| `lifts.<lift>.nextWeightKg` | Sets that lift's next working weight, applied once per `planId`. After that, normal progression carries on from it. |
+| `lifts.<lift>.incrementKg` | Sets that lift's increment from now on (e.g. 1.25 for micro-plates). It stays until a later plan changes it, or the matching setting in the app is changed by hand. |
+| `lifts.<lift>.note` | Shown on sessions that include that lift. |
+
+Lift keys are `squat`, `bench`, `row`, `ohp` and `deadlift`. If a plan arrives in the middle of a lifting workout, its lift changes wait until that workout is saved.
+Each session records the `planId` that was in force, in `lift-log.json` and the Sessions `plan_id` column.

@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '1.1.2';
+  const APP_VERSION = '1.2.0';
   const P = window.PROGRAM;
   const $ = (sel, el = document) => el.querySelector(sel);
 
@@ -9,6 +9,7 @@
   const KEYS = {
     settings: 'll.settings', sessions: 'll.sessions', drafts: 'll.drafts', legacyActive: 'll.active',
     queue: 'll.syncQueue', sync: 'll.syncMeta', timer: 'll.timer',
+    plan: 'll.plan', appliedPlans: 'll.appliedPlans',
   };
   function load(key, fallback) {
     try { const v = localStorage.getItem(key); return v == null ? fallback : JSON.parse(v); }
@@ -27,17 +28,21 @@
     hiitRounds: P.hiit.rounds,
     rest: { ...P.rest },
     keepAwake: true, sound: true, vibrate: true,
-    adjustments: [],   // manual working-weight changes: {lift, weight, at, note}
+    adjustments: [],   // manual or coach working-weight changes: {lift, weight, at, note, planId?}
+    liftIncrements: {}, // coach-plan increment overrides by lift, e.g. {ohp: 1.25}
   };
   const settings = { ...DEFAULT_SETTINGS, ...load(KEYS.settings, {}) };
   settings.rest = { ...P.rest, ...(settings.rest || {}) };
   settings.adjustments = settings.adjustments || [];
+  settings.liftIncrements = settings.liftIncrements || {};
 
   let sessions = load(KEYS.sessions, []);   // finished (completed / partial / skipped)
   let drafts = load(KEYS.drafts, {});       // unfinished sessions by id, each bound to its own date
   let queue = load(KEYS.queue, []);         // [{id, op: 'upsert' | 'delete'}] waiting to sync
   let syncMeta = load(KEYS.sync, {});       // id -> {state, at, error}
   let timer = load(KEYS.timer, null);
+  let coachPlan = load(KEYS.plan, {});       // lift-log-plan.json from Drive, written by the Brad's Fitness project
+  let appliedPlans = load(KEYS.appliedPlans, []); // planIds whose lift overrides have been applied
 
   // v1.0 kept a single in-progress session and a queue of plain ids.
   const legacy = load(KEYS.legacyActive, null);
@@ -95,6 +100,7 @@
   }
 
   function incFor(lift) {
+    if (Number(settings.liftIncrements[lift]) > 0) return Number(settings.liftIncrements[lift]);
     if (lift === 'deadlift') return Number(settings.deadliftIncrement) || P.lifts.deadlift.increment;
     if (lift === 'bench' && settings.microBench) return 1.25;
     if (lift === 'ohp' && settings.microOhp) return 1.25;
@@ -149,6 +155,7 @@
       id: uid(date, type), date, type, week: weekOf(date), programVersion: settings.programVersion,
       status: 'in_progress', startedAt: null, endedAt: null, rpe: null, bodyweight: null, notes: '', tz: tz(),
     };
+    if (coachPlan.planId) base.planId = coachPlan.planId;
     if (type === 'lift') {
       const st = progression();
       base.workout = workout || workoutFor(date);
@@ -164,12 +171,14 @@
       base.cardio = { minutes: P.walk.segments.reduce((t, x) => t + x.min, 0) };
     } else if (type === 'hiit') {
       const lastHiit = sessions.filter(s => s.type === 'hiit' && s.cardio && s.cardio.hardMode).sort(bySessionTime).pop();
-      const r = Number(settings.hiitRounds) || P.hiit.rounds;
+      const ph = coachPlan.hiit || {};
+      const pick = (v, fallback) => (v != null && v !== '' ? v : fallback);   // coach plan beats last session
+      const r = Number(pick(ph.rounds, settings.hiitRounds)) || P.hiit.rounds;
       base.cardio = {
         plannedRounds: r, roundsCompleted: r, minutes: null,
-        hardMode: lastHiit ? lastHiit.cardio.hardMode : 'jog',
-        hardSpeed: lastHiit ? lastHiit.cardio.hardSpeed : 7.5,
-        hardIncline: lastHiit ? lastHiit.cardio.hardIncline : 0,
+        hardMode: pick(ph.hardMode, lastHiit ? lastHiit.cardio.hardMode : 'jog'),
+        hardSpeed: Number(pick(ph.hardSpeed, lastHiit ? lastHiit.cardio.hardSpeed : 7.5)),
+        hardIncline: Number(pick(ph.hardIncline, lastHiit ? lastHiit.cardio.hardIncline : 0)),
       };
     }
     return base;
@@ -227,7 +236,7 @@
   const SESSION_COLS = ['session_id', 'date', 'session_type', 'workout', 'week', 'program_version', 'status', 'skip_reason',
     'start_time', 'end_time', 'duration_min', 'session_rpe', 'bodyweight_kg', 'sets_planned', 'sets_done', 'sets_failed',
     'exercises_summary', 'cardio_minutes', 'hiit_rounds_planned', 'hiit_rounds_completed', 'hiit_hard_mode',
-    'hiit_hard_speed_kph', 'hiit_hard_incline_pct', 'timezone', 'notes'];
+    'hiit_hard_speed_kph', 'hiit_hard_incline_pct', 'timezone', 'notes', 'plan_id'];
   const SET_COLS = ['session_id', 'date', 'start_time', 'end_time', 'program_version', 'week', 'workout', 'session_status',
     'exercise', 'lift', 'set_no', 'planned_weight_kg', 'actual_weight_kg', 'target_reps', 'actual_reps', 'result', 'effort',
     'logged_at', 'session_rpe', 'bodyweight_kg', 'notes'];
@@ -250,7 +259,7 @@
       exercises_summary: lifted ? s.exercises.map(exSummary).join('; ') : '',
       cardio_minutes: blank(c.minutes), hiit_rounds_planned: blank(c.plannedRounds), hiit_rounds_completed: blank(c.roundsCompleted),
       hiit_hard_mode: blank(c.hardMode), hiit_hard_speed_kph: blank(c.hardSpeed), hiit_hard_incline_pct: blank(c.hardIncline),
-      timezone: blank(s.tz), notes: blank(s.notes),
+      timezone: blank(s.tz), notes: blank(s.notes), plan_id: blank(s.planId),
     };
   }
   function setRows(s) {
@@ -290,7 +299,80 @@
     if (!j.ok) throw new Error(j.error || 'Rejected by sync script');
     return j;
   }
+  // ---------- coach plan (lift-log-plan.json, served by the script's doGet?action=plan) ----------
+  let planFetchedAt = 0;
+  ui.planError = null;
+  async function fetchPlan(force) {
+    if (!settings.syncUrl || !settings.syncToken || !navigator.onLine) return;
+    if (!force && Date.now() - planFetchedAt < 30000) return;
+    planFetchedAt = Date.now();
+    try {
+      const u = new URL(settings.syncUrl);
+      u.searchParams.set('action', 'plan'); u.searchParams.set('token', settings.syncToken);
+      const res = await fetch(u, { cache: 'no-store' });
+      const j = await res.json();
+      if (!j || typeof j !== 'object' || Array.isArray(j)) throw new Error('Unexpected plan response');
+      if (j.ok === false) throw new Error(j.error || 'Plan request rejected');
+      if (j.service) throw new Error('Sync script is out of date — redeploy the latest Code.gs');
+      ui.planError = null;
+      const changed = JSON.stringify(j) !== JSON.stringify(coachPlan);
+      coachPlan = j; save(KEYS.plan, coachPlan);
+      const applied = applyPlan();
+      if (changed || applied) safeRender();
+    } catch (e) {
+      ui.planError = e.message;   // keep the last plan we had
+    }
+  }
+
+  // Lift overrides apply once per planId, as a weight adjustment stamped now, so progression carries on
+  // normally from there. Waits while a lifting session is underway so it can't rewrite that workout.
+  function applyPlan() {
+    const lifts = coachPlan.lifts;
+    if (!coachPlan.planId || !lifts || appliedPlans.includes(coachPlan.planId)) return false;
+    const liftDrafts = Object.values(drafts).filter(d => d.type === 'lift' && !d._editing);
+    if (liftDrafts.some(d => d.exercises.some(e => e.sets.some(x => x.result)))) return false;
+    const at = nowIso();
+    for (const [lift, o] of Object.entries(lifts)) {
+      if (!P.lifts[lift] || !o) continue;
+      if (Number(o.nextWeightKg) > 0) {
+        settings.adjustments.push({ lift, weight: roundW(Number(o.nextWeightKg)), at, note: o.note || 'Coach plan', planId: coachPlan.planId });
+      }
+      if (Number(o.incrementKg) > 0) settings.liftIncrements[lift] = Number(o.incrementKg);
+    }
+    saveSettings();
+    appliedPlans.push(coachPlan.planId); save(KEYS.appliedPlans, appliedPlans);
+    // Untouched lift drafts (e.g. opened but no sets logged yet) pick up the new targets.
+    const st = progression();
+    for (const d of liftDrafts) {
+      for (const e of d.exercises) {
+        if (e.weight === e.plannedWeight) e.weight = st[e.lift].weight;
+        e.plannedWeight = st[e.lift].weight; e.increment = incFor(e.lift);
+      }
+      d.planId = coachPlan.planId;
+    }
+    saveDrafts();
+    return true;
+  }
+
+  function coachCard(s) {
+    if (s._editing || s.backfilled || s.date !== ui.today) return '';
+    const lines = [];
+    if (coachPlan.note) lines.push(esc(coachPlan.note));
+    if (s.type === 'lift') {
+      for (const e of s.exercises) {
+        const n = coachPlan.lifts && coachPlan.lifts[e.lift] && coachPlan.lifts[e.lift].note;
+        if (n) lines.push(`<b>${esc(e.name)}:</b> ${esc(n)}`);
+      }
+    } else {
+      const n = coachPlan[s.type] && coachPlan[s.type].note;
+      if (n) lines.push(esc(n));
+    }
+    if (!lines.length) return '';
+    return `<article class="card coach"><div class="coach-head">Coach notes</div>${lines.map(l => `<p>${l}</p>`).join('')}</article>`;
+  }
+
   async function syncNow(manual) {
+    fetchPlan(manual);
     if (syncing || !queue.length) return;
     if (!settings.syncUrl) { if (manual) toast('Add the sync URL in Settings first'); return; }
     syncing = true; refreshSyncUi();
@@ -324,7 +406,14 @@
     if (!settings.syncUrl) return `<span class="badge warn">Saved on phone · sync not set up</span>`;
     return `<span class="badge warn">${syncing ? 'Syncing…' : 'Waiting to sync'}</span>`;
   }
-  function refreshSyncUi() { if (!ui.modal) render(); }
+  function refreshSyncUi() { safeRender(); }
+  const typing = () => { const a = document.activeElement; return !!(a && a.closest && a.closest('#app') && /^(INPUT|TEXTAREA)$/.test(a.tagName)); };
+  function safeRender() {
+    if (ui.modal) return;
+    if (typing()) { ui.renderPending = true; return; }   // applied by tick() once you leave the field
+    ui.renderPending = false;
+    render();
+  }
 
   // ---------- sounds & alerts ----------
   let audioCtx = null;
@@ -359,6 +448,7 @@
   }
   function stopTimer() { timer = null; save(KEYS.timer, null); tick(); }
   function tick() {
+    if (ui.renderPending && !typing() && !ui.modal) { safeRender(); return; }
     tickGuides();
     const bar = $('#timer');
     if (!timer) { bar.hidden = true; return; }
@@ -427,6 +517,7 @@
   // ---------- rendering ----------
   function render() {
     if (ui.reloadPending && !ui.modal) { location.reload(); return; }
+    ui.renderPending = false;
     document.querySelectorAll('.tabs [data-view]').forEach(b => b.classList.toggle('on', b.dataset.view === ui.view));
     const app = $('#app');
     app.innerHTML = ui.view === 'history' ? renderHistory() : ui.view === 'settings' ? renderSettings() : renderDay();
@@ -526,6 +617,7 @@
           <button class="${s.workout === 'B' ? 'on' : ''}" data-action="set-workout" data-w="B">B</button></div>` : ''}
       </div>
       ${s._editing ? `<p class="muted">Editing a saved session.</p>` : ''}
+      ${readOnly ? '' : coachCard(s)}
       ${readOnly ? '<p class="muted">Planned — weights update as you log sessions.</p>' :
         s.backfilled || (s.date < ui.today && !started) ? '<p class="muted">Logged after the fact, so no start/end times.</p>' :
         started ? `<p class="muted">Started ${s.date < ui.today ? fmtShort(s.date) + ' ' : ''}${fmtTime(s.startedAt)}</p>` :
@@ -567,6 +659,8 @@
     let h = `<section class="session ${readOnly ? 'readonly' : ''}" data-sid="${s.id}">
       <div class="session-head"><h2>${TYPE_LABEL[s.type]}</h2></div>`;
     if (readOnly) return h + plan + '</section>';
+    h += coachCard(s);
+    const notes = field('Notes', `<textarea data-text="notes" rows="2" placeholder="Anything to remember for Finish?">${esc(s.notes || '')}</textarea>`);
 
     if (s._editing || s.backfilled || (s.date < ui.today && !s.guide)) {
       const note = s._editing ? 'Editing a saved session.'
@@ -585,6 +679,7 @@
           <button class="btn" data-action="guide-pause">${paused ? '▶ Resume' : '❚❚ Pause'}</button>
           <button class="btn" data-action="guide-next">Next segment ›</button>
         </div>
+        <article class="card form">${notes}</article>
         <div class="actions">
           <button class="btn primary" data-action="finish">Finish session</button>
           <button class="btn ghost" data-action="discard">Discard</button>
@@ -601,7 +696,8 @@
           ${c.hardMode === 'incline' ? field('Hard incline (%)', `<input type="number" inputmode="decimal" step="0.5" data-field="cardio.hardIncline" value="${esc(c.hardIncline)}">`) : ''}
         </article>`;
       }
-      h += `<button class="btn primary wide" data-action="start">Start session</button>
+      h += `<article class="card form">${notes}</article>
+        <button class="btn primary wide" data-action="start">Start session</button>
         <p class="hint">The app guides you through each segment and buzzes when it's time to change speed.</p>
         <div class="actions">
           <button class="btn" data-action="finish">Log without timer</button>
@@ -682,6 +778,8 @@
         <div class="row"><button class="btn" data-action="test-sync">Test connection</button>
           <button class="btn" data-action="sync-now">Sync now</button></div>
         <p class="muted">${queue.length ? `${queue.length} change(s) waiting to sync.` : 'Nothing waiting to sync.'}</p>
+        <p class="muted">Coach plan: ${coachPlan.planId ? `updated ${coachPlan.updatedAt ? esc(new Date(coachPlan.updatedAt).toLocaleString('en-AU', { dateStyle: 'medium', timeStyle: 'short' })) : '(no date)'}` : 'none yet'}${ui.planError ? ` · <span class="warn-text">${esc(ui.planError)}</span>` : ''}
+          · <button class="link" data-action="refresh-plan">Refresh</button></p>
       </section>
 
       <section class="card form"><h3>Program</h3>
@@ -870,6 +968,7 @@
     delete ui.guide[s.id];
     if (s.type === 'lift') stopTimer();
     enqueue(s.id, 'upsert');
+    applyPlan();
     ui.modal = null; ui.date = s.date;
     render();
     syncNow();
@@ -1017,7 +1116,12 @@
     'timer-stop'() { stopTimer(); },
     'test-alarm'() { unlockAudio(); alarm(); },
 
-    'seg-setting'(el) { settings[el.dataset.key] = Number(el.dataset.value); saveSettings(); render(); },
+    'seg-setting'(el) {
+      settings[el.dataset.key] = Number(el.dataset.value);
+      if (el.dataset.key === 'deadliftIncrement') delete settings.liftIncrements.deadlift;
+      saveSettings(); render();
+    },
+    async 'refresh-plan'() { await fetchPlan(true); toast(ui.planError ? 'Plan: ' + ui.planError : 'Coach plan refreshed'); render(); },
     adjust(el) { openModal({ type: 'adjust', lift: el.dataset.lift, value: progression()[el.dataset.lift].weight }); },
     'save-adjust'() {
       const v = parseFloat($('#f-adj').value);
@@ -1097,12 +1201,21 @@
       else closeModal();
     }
   });
+  document.addEventListener('input', e => {
+    const el = e.target;
+    if (!el.dataset.text) return;
+    const host = el.closest('[data-sid]'); if (host) ui.sid = host.dataset.sid;
+    setPath(editing(), el.dataset.text, el.value); saveDrafts();
+  });
   document.addEventListener('change', e => {
     const el = e.target;
     if (el.dataset.actionChange === 'restore' && el.files[0]) { restore(el.files[0]); el.value = ''; return; }
     if (el.dataset.setting) {
       const v = el.type === 'checkbox' ? el.checked : el.type === 'number' ? Number(el.value) : el.value.trim();
-      setPath(settings, el.dataset.setting, v); saveSettings();
+      setPath(settings, el.dataset.setting, v);
+      if (el.dataset.setting === 'microBench') delete settings.liftIncrements.bench;
+      if (el.dataset.setting === 'microOhp') delete settings.liftIncrements.ohp;
+      saveSettings();
       if (el.dataset.setting === 'syncUrl' && v) syncNow();
     } else if (el.dataset.field) {
       const host = el.closest('[data-sid]'); if (host) ui.sid = host.dataset.sid;
@@ -1133,6 +1246,7 @@
     document.addEventListener('visibilitychange', () => { if (!document.hidden && swReg) swReg.update().catch(() => {}); });
   }
 
+  applyPlan();
   render();
   syncNow();
 })();
