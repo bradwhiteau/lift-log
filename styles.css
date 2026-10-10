@@ -153,6 +153,16 @@ tr:first-child td { border-top: 0; }
 .banner span { display: block; color: var(--muted); font-size: .88rem; margin-top: 2px; }
 .link.danger { color: var(--fail); }
 
+/* connections */
+.conn-row { display: flex; gap: 12px; align-items: center; padding: 10px 0; border-top: 1px solid var(--border); }
+.conn-row:first-of-type { border-top: 0; }
+.conn-main { flex: 1; min-width: 0; }
+.conn-actions { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.btn.small { min-height: 36px; padding: 6px 12px; font-size: .9rem; }
+.small { font-size: .82rem; }
+.ok-text { color: var(--ok); font-weight: 700; }
+.warn-chip { display: block; margin: -4px auto 12px; border-color: var(--hard); color: var(--hard); background: color-mix(in srgb, var(--hard) 12%, var(--surface)); }
+
 /* coach notes from lift-log-plan.json */
 .coach { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--surface)); }
 .coach .coach-head { font-size: .78rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--accent); }

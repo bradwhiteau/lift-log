@@ -2,12 +2,16 @@
  * Lift Log sync — receives sessions from the Lift Log app and stores them in:
  *   - this Google Sheet: "Sessions" (one row per session), "Sets" (one row per set), "State" (current weights)
  *   - lift-log.json in the same Drive folder as this Sheet (full history, for the Claude project)
+ * Also serves the coach plan, and (v1.3) weight from Home Assistant and Fitbit data from the Google Health API:
+ * see HomeAssistant.gs, GoogleHealth.gs and Connections.gs, which live in this same Apps Script project.
  *
  * Setup: see README.md. Change SYNC_TOKEN below, run setup() once, then deploy as a web app.
+ * Secrets (HA token, Google OAuth client) go in Script Properties, never in this file — the repo is public.
  */
 const SYNC_TOKEN = 'CHANGE-ME';
 const JSON_FILE_NAME = 'lift-log.json';
 const PLAN_FILE_NAME = 'lift-log-plan.json';
+const TZ = 'Australia/Perth';
 
 function doPost(e) {
   let body;
@@ -39,31 +43,60 @@ function doPost(e) {
 }
 
 /**
- * doGet?action=plan&token=… returns lift-log-plan.json from this Sheet's folder (written by the
- * Brad's Fitness Claude project), or {} if there isn't one. Anything else is a health check.
+ * GET endpoints, all needing &token=<SYNC_TOKEN>:
+ *   action=plan                        lift-log-plan.json (written by the Brad's Fitness project), or {}
+ *   action=weight&date=YYYY-MM-DD      that day's morning weigh-in from Home Assistant, or {}
+ *   action=connections                 status of the Home Assistant and Google Health connections
+ *   action=auth&service=googlehealth   a fresh Google Health authorisation URL (JSON, for the app)
+ *   action=authorize                   a page linking to a fresh authorisation URL (for the alert email)
+ *   action=sync&service=homeassistant|googlehealth   run that sync now
+ * No action is a health check.
  */
 function doGet(e) {
   const p = (e && e.parameter) || {};
-  if (p.action !== 'plan') return out_({ ok: true, service: 'Lift Log sync' });
+  if (!p.action) return out_({ ok: true, service: 'Lift Log sync' });
   if (SYNC_TOKEN === 'CHANGE-ME' || p.token !== SYNC_TOKEN) return out_({ ok: false, error: 'Wrong sync token' });
-  const files = folder_(spreadsheet_()).getFilesByName(PLAN_FILE_NAME);
-  if (!files.hasNext()) return out_({});
   try {
-    return out_(JSON.parse(files.next().getBlob().getDataAsString()));
+    switch (p.action) {
+      case 'plan': {
+        const plan = readDriveJson_(PLAN_FILE_NAME);
+        if (plan === undefined) return out_({ ok: false, error: PLAN_FILE_NAME + ' is not valid JSON' });
+        return out_(plan || {});
+      }
+      case 'weight': return out_(weighInFor_(p.date || ymd_(new Date())));
+      case 'connections': return out_({ ok: true, services: connections_() });
+      case 'auth':
+        if (p.service !== 'googlehealth') return out_({ ok: false, error: 'Only googlehealth uses authorisation' });
+        return out_({ ok: true, url: ghAuthUrl_() });
+      case 'authorize':   // the link in alert emails: a page with a fresh Google authorisation link
+        return HtmlService.createHtmlOutput('<p style="font:18px sans-serif;margin:24px">' +
+          '<a href="' + ghAuthUrl_() + '" target="_top">Authorise Google Health for Lift Log</a></p>')
+          .setTitle('Lift Log').addMetaTag('viewport', 'width=device-width, initial-scale=1');
+      case 'sync':
+        if (p.service === 'homeassistant') syncHomeAssistant();
+        else if (p.service === 'googlehealth') syncGoogleHealth();
+        else return out_({ ok: false, error: 'Unknown service' });
+        return out_({ ok: true, services: connections_() });
+      default: return out_({ ok: false, error: 'Unknown action — redeploy the latest script' });
+    }
   } catch (err) {
-    return out_({ ok: false, error: PLAN_FILE_NAME + ' is not valid JSON' });
+    return out_({ ok: false, error: String((err && err.message) || err) });
   }
 }
 
-/** Run once from the editor: authorises the script and creates the tabs. */
+/**
+ * Run once from the editor (and again after adding new script files): authorises the script, creates the
+ * tabs and installs the hourly trigger. Safe to re-run.
+ */
 function setup() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   PropertiesService.getScriptProperties().setProperty('SPREADSHEET_ID', ss.getId());
-  ['Sessions', 'Sets', 'State'].forEach(function (name) { if (!ss.getSheetByName(name)) ss.insertSheet(name); });
+  ['Sessions', 'Sets', 'State', 'Weight', 'Health'].forEach(function (name) { if (!ss.getSheetByName(name)) ss.insertSheet(name); });
   const first = ss.getSheetByName('Sheet1');
   if (first && ss.getSheets().length > 1 && first.getLastRow() === 0) ss.deleteSheet(first);
   folder_(ss); // touches Drive so its permission is granted now
-  Logger.log('Setup complete for "%s"', ss.getName());
+  installTriggers_();
+  Logger.log('Setup complete for "%s". Google Health redirect URI: %s', ss.getName(), ghRedirectUri_());
 }
 
 function spreadsheet_() {
@@ -141,6 +174,41 @@ function writeJson_(ss, id, session, state) {
   const content = JSON.stringify(out, null, 2);
   if (file) file.setContent(content);
   else folder.createFile(JSON_FILE_NAME, content, 'application/json');
+}
+
+/** Parsed JSON file from this Sheet's folder: null if missing, undefined if not valid JSON. */
+function readDriveJson_(name) {
+  const files = folder_(spreadsheet_()).getFilesByName(name);
+  if (!files.hasNext()) return null;
+  try { return JSON.parse(files.next().getBlob().getDataAsString()); } catch (e) { return undefined; }
+}
+
+function writeDriveJson_(name, obj) {
+  const folder = folder_(spreadsheet_());
+  const files = folder.getFilesByName(name);
+  const content = JSON.stringify(obj, null, 2);
+  if (files.hasNext()) files.next().setContent(content);
+  else folder.createFile(name, content, 'application/json');
+}
+
+/** Rewrites a whole tab: header row plus rows (arrays in header order). */
+function writeTable_(name, headers, rows) {
+  const ss = spreadsheet_();
+  const sh = ss.getSheetByName(name) || ss.insertSheet(name);
+  sh.clearContents();
+  if (sh.getMaxColumns() < headers.length) sh.insertColumnsAfter(sh.getMaxColumns(), headers.length - sh.getMaxColumns());
+  sh.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight('bold');
+  sh.setFrozenRows(1);
+  if (rows.length) sh.getRange(2, 1, rows.length, headers.length).setValues(rows);
+}
+
+/** Dates and times in Perth. */
+function ymd_(d) { return Utilities.formatDate(d, TZ, 'yyyy-MM-dd'); }
+function hm_(d) { return Utilities.formatDate(d, TZ, 'HH:mm'); }
+function perthHour_(d) { return Number(Utilities.formatDate(d || new Date(), TZ, 'H')); }
+function addDaysYmd_(s, n) {
+  const d = new Date(s + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
 }
 
 function out_(obj) {

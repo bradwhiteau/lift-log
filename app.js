@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '1.2.0';
+  const APP_VERSION = '1.3.0';
   const P = window.PROGRAM;
   const $ = (sel, el = document) => el.querySelector(sel);
 
@@ -9,7 +9,7 @@
   const KEYS = {
     settings: 'll.settings', sessions: 'll.sessions', drafts: 'll.drafts', legacyActive: 'll.active',
     queue: 'll.syncQueue', sync: 'll.syncMeta', timer: 'll.timer',
-    plan: 'll.plan', appliedPlans: 'll.appliedPlans',
+    plan: 'll.plan', appliedPlans: 'll.appliedPlans', connections: 'll.connections', weighIns: 'll.weighIns',
   };
   function load(key, fallback) {
     try { const v = localStorage.getItem(key); return v == null ? fallback : JSON.parse(v); }
@@ -43,6 +43,8 @@
   let timer = load(KEYS.timer, null);
   let coachPlan = load(KEYS.plan, {});       // lift-log-plan.json from Drive, written by the Brad's Fitness project
   let appliedPlans = load(KEYS.appliedPlans, []); // planIds whose lift overrides have been applied
+  let connections = load(KEYS.connections, null);  // {homeassistant, googlehealth} status from the sync script
+  let weighIns = load(KEYS.weighIns, {});           // date -> morning weigh-in from Home Assistant (Withings)
 
   // v1.0 kept a single in-progress session and a queue of plain ids.
   const legacy = load(KEYS.legacyActive, null);
@@ -156,6 +158,8 @@
       status: 'in_progress', startedAt: null, endedAt: null, rpe: null, bodyweight: null, notes: '', tz: tz(),
     };
     if (coachPlan.planId) base.planId = coachPlan.planId;
+    const wi = weighIns[date];
+    if (wi && wi.weight_kg) { base.bodyweight = wi.weight_kg; base.bodyweightSource = 'withings'; }
     if (type === 'lift') {
       const st = progression();
       base.workout = workout || workoutFor(date);
@@ -371,8 +375,86 @@
     return `<article class="card coach"><div class="coach-head">Coach notes</div>${lines.map(l => `<p>${l}</p>`).join('')}</article>`;
   }
 
+  // ---------- connections (Home Assistant weight, Google Health) and the morning weigh-in ----------
+  let connFetchedAt = 0, weighFetchedAt = 0;
+  ui.connError = null;
+  function scriptGet(params) {
+    const u = new URL(settings.syncUrl);
+    Object.entries({ ...params, token: settings.syncToken }).forEach(([k, v]) => u.searchParams.set(k, v));
+    return fetch(u, { cache: 'no-store' }).then(r => r.json()).then(j => {
+      if (j && j.ok === false) throw new Error(j.error || 'Request rejected');
+      if (j && j.service) throw new Error('Sync script is out of date — redeploy the latest version');
+      return j;
+    });
+  }
+  async function fetchConnections(force) {
+    if (!settings.syncUrl || !settings.syncToken || !navigator.onLine) return;
+    if (!force && Date.now() - connFetchedAt < 5 * 60000) return;
+    connFetchedAt = Date.now();
+    try {
+      const j = await scriptGet({ action: 'connections' });
+      ui.connError = null;
+      const changed = JSON.stringify(j.services) !== JSON.stringify(connections);
+      connections = j.services; save(KEYS.connections, connections);
+      if (changed) safeRender();
+    } catch (e) { ui.connError = e.message; }
+  }
+  async function fetchWeighIn(force) {
+    const date = ui.today;
+    if (weighIns[date] || !settings.syncUrl || !settings.syncToken || !navigator.onLine) return;
+    if (!force && Date.now() - weighFetchedAt < 10 * 60000) return;
+    weighFetchedAt = Date.now();
+    try {
+      const j = await scriptGet({ action: 'weight', date });
+      if (!j.weight_kg) return;
+      weighIns = { [date]: j };   // only today's is ever needed
+      save(KEYS.weighIns, weighIns);
+      // Drafts for today that haven't got a bodyweight yet pick it up (you can still change it at Finish).
+      let touched = false;
+      for (const d of Object.values(drafts)) {
+        if (d.date === date && d.bodyweight == null && !d._editing) { d.bodyweight = j.weight_kg; d.bodyweightSource = 'withings'; touched = true; }
+      }
+      if (touched) saveDrafts();
+      safeRender();
+    } catch (e) { /* no weigh-in yet, or old script: try again later */ }
+  }
+  const needsAttention = () => !!connections && Object.values(connections).some(c => c && c.needsAttention);
+  function fmtWhen(iso) {
+    if (!iso) return '';
+    const d = new Date(iso), day = ymd(d);
+    const t = d.toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' }).replace(/\s/g, '').toLowerCase();
+    if (day === ui.today) return `today ${t}`;
+    if (day === addDays(ui.today, -1)) return `yesterday ${t}`;
+    return `${fmtShort(day)} ${t}`;
+  }
+  function connectionsCard() {
+    const c = connections || {};
+    const row = (key, title, okText, badText, canReauth) => {
+      const x = c[key];
+      let status;
+      if (!x) status = '<span class="muted">Not checked yet</span>';
+      else if (x.needsAttention) status = `<span class="warn-text">⚠ ${badText}</span>`;
+      else if (!x.lastSyncAt) status = '<span class="muted">Not synced yet</span>';
+      else status = `${okText(x)} <span class="ok-text">✓</span>`;
+      const detail = x && x.lastError ? `<div class="muted small">${esc(x.lastError)}</div>` : '';
+      return `<div class="conn-row">
+        <div class="conn-main"><b>${title}</b><div>${status}</div>${detail}</div>
+        <div class="conn-actions">
+          ${canReauth && x && (x.needsAttention || !x.connected) ? `<button class="btn small" data-action="reauth" data-service="${key}">Re-authorise</button>` : ''}
+          <button class="link" data-action="conn-sync" data-service="${key}">${ui.connSyncing === key ? 'Syncing…' : 'Sync now'}</button>
+        </div></div>`;
+    };
+    return `<section class="card" id="connections"><h3>Connections</h3>
+      ${row('homeassistant', 'Home Assistant (weight)', x => x.lastReadingAt ? `Last weigh-in ${fmtWhen(x.lastReadingAt)}` : `Checked ${fmtWhen(x.lastSyncAt)}, no weigh-ins yet`, 'Check HA token', false)}
+      ${row('googlehealth', 'Google Health (Fitbit)', x => `Last synced ${fmtWhen(x.lastSyncAt)}`, 'Needs re-authorising', true)}
+      ${ui.connError ? `<p class="muted"><span class="warn-text">${esc(ui.connError)}</span></p>` : ''}
+    </section>`;
+  }
+
   async function syncNow(manual) {
     fetchPlan(manual);
+    fetchConnections(manual);
+    fetchWeighIn(manual);
     if (syncing || !queue.length) return;
     if (!settings.syncUrl) { if (manual) toast('Add the sync URL in Settings first'); return; }
     syncing = true; refreshSyncUi();
@@ -544,7 +626,8 @@
         <button class="nav" data-action="day" data-delta="1" aria-label="Next day">›</button>
       </header>
       <div class="meta">${weekOf(date) ? `Week ${weekOf(date)}` : 'Pre-program'} · ${TYPE_LABEL[planned]}
-        ${date !== today ? ` · <button class="link" data-action="go-today">Back to today</button>` : ''}</div>`;
+        ${date !== today ? ` · <button class="link" data-action="go-today">Back to today</button>` : ''}</div>
+      ${needsAttention() ? `<button class="chip warn-chip" data-action="open-connections">⚠ A connection needs attention</button>` : ''}`;
 
     for (const d of elsewhere) {
       h += `<button class="banner" data-action="goto" data-date="${d.date}">
@@ -782,6 +865,8 @@
           · <button class="link" data-action="refresh-plan">Refresh</button></p>
       </section>
 
+      ${connectionsCard()}
+
       <section class="card form"><h3>Program</h3>
         <p class="muted">${esc(P.name)} · started ${fmtShort(P.startDate)}</p>
         ${field('Program version (logged with each session)', `<input type="text" data-setting="programVersion" value="${esc(settings.programVersion)}">`)}
@@ -898,7 +983,7 @@
           <button class="${m.status === 'partial' ? 'on' : ''}" data-action="modal-pick" data-key="status" data-value="partial">Partial</button></div>`)}
         <div class="field"><span>Perceived intensity (1 = very easy, 10 = max effort)</span>
           <div class="rpe">${[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => `<button class="${m.rpe === n ? 'on' : ''}" data-action="modal-pick" data-key="rpe" data-value="${n}">${n}</button>`).join('')}</div></div>
-        ${field('Bodyweight (kg, optional)', `<input type="number" inputmode="decimal" step="0.1" id="f-bw" value="${esc(s.bodyweight || '')}">`)}
+        ${field(s.bodyweightSource === 'withings' ? 'Bodyweight (kg) — from this morning\'s weigh-in' : 'Bodyweight (kg, optional)', `<input type="number" inputmode="decimal" step="0.1" id="f-bw" value="${esc(s.bodyweight || '')}">`)}
         ${field('Notes (optional)', `<textarea id="f-notes" rows="3" placeholder="How did it feel? Anything to flag?">${esc(s.notes || '')}</textarea>`)}
         <div class="row"><button class="btn primary" data-action="save-finish" ${m.rpe ? '' : 'disabled'}>Save</button>
           <button class="btn ghost" data-action="close-modal">Back</button></div>`;
@@ -907,6 +992,11 @@
         ${field('Reason', `<textarea id="f-reason" rows="3" placeholder="e.g. sick, travel, work ran late">${esc(editing().skipReason || '')}</textarea>`)}
         <div class="row"><button class="btn primary" data-action="save-skip">Mark as skipped</button>
           <button class="btn ghost" data-action="close-modal">Back</button></div>`;
+    } else if (m.type === 'auth-link') {
+      inner = `<h2>Re-authorise Google Health</h2>
+        <p class="muted">Open this link, sign in with your Google account and allow access. It's valid for an hour.</p>
+        <div class="row"><a class="btn primary" href="${esc(m.url)}" target="_blank" rel="noopener" data-action="close-modal">Open Google sign-in</a>
+          <button class="btn ghost" data-action="close-modal">Close</button></div>`;
     } else if (m.type === 'adjust') {
       inner = `<h2>Set ${P.lifts[m.lift].name} weight</h2>
         ${field('Next working weight (kg)', `<input type="number" inputmode="decimal" step="0.25" id="f-adj" value="${fmtW(m.value)}">`)}
@@ -1098,6 +1188,7 @@
         }
       }
       const bw = num('#f-bw');
+      if (s.bodyweightSource === 'withings' && bw !== s.bodyweight) s.bodyweightSource = bw > 0 ? 'manual' : null;
       Object.assign(s, { status: m.status, rpe: m.rpe, bodyweight: bw > 0 ? bw : null, notes: $('#f-notes').value.trim(), skipReason: null });
       finalize(s);
       toast('Session saved');
@@ -1120,6 +1211,36 @@
       settings[el.dataset.key] = Number(el.dataset.value);
       if (el.dataset.key === 'deadliftIncrement') delete settings.liftIncrements.deadlift;
       saveSettings(); render();
+    },
+    'open-connections'() {
+      ui.view = 'settings'; render();
+      const el = document.getElementById('connections');
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    },
+    async 'conn-sync'(el) {
+      const service = el.dataset.service;
+      ui.connSyncing = service; render();
+      try {
+        const j = await scriptGet({ action: 'sync', service });
+        connections = j.services; save(KEYS.connections, connections); ui.connError = null;
+        const x = connections[service];
+        toast(x.needsAttention ? 'Sync failed: ' + (x.lastError || 'needs attention') : x.lastError ? 'Synced with problems: ' + x.lastError : 'Synced');
+        if (service === 'homeassistant') { weighFetchedAt = 0; fetchWeighIn(true); }
+      } catch (e) { toast('Sync failed: ' + e.message); }
+      ui.connSyncing = null; render();
+    },
+    async reauth(el) {
+      // Open the tab now, while we still have the tap (browsers block pop-ups opened after an await).
+      const w = window.open('', '_blank');
+      try {
+        const j = await scriptGet({ action: 'auth', service: el.dataset.service });
+        if (w && !w.closed) w.location.href = j.url;
+        else openModal({ type: 'auth-link', url: j.url });
+        toast('Finish authorising in the new tab, then come back and tap Sync now');
+      } catch (e) {
+        if (w) w.close();
+        toast('Could not get the authorisation link: ' + e.message);
+      }
     },
     async 'refresh-plan'() { await fetchPlan(true); toast(ui.planError ? 'Plan: ' + ui.planError : 'Coach plan refreshed'); render(); },
     adjust(el) { openModal({ type: 'adjust', lift: el.dataset.lift, value: progression()[el.dataset.lift].weight }); },

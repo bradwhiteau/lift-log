@@ -17,6 +17,7 @@ Phone (Lift Log PWA)  ──POST──►  Apps Script web app  ──►  "Lift
 
 1. In Google Drive, open **My Drive → 06 Interests → Fitness**, then **New → Google Sheets**. Name it **Lift Log**.
 2. In the Sheet: **Extensions → Apps Script**. Delete the sample code and paste in everything from `apps-script/Code.gs`.
+   From v1.3 the project has four files: also add `Connections.gs`, `HomeAssistant.gs` and `GoogleHealth.gs` (**+ → Script**, same names, without `.gs`). See [Weight and Fitbit sync](#1a-weight-and-fitbit-sync-v13).
 3. On line 8, replace `CHANGE-ME` with a long passphrase of your own, e.g. `squat-rack-purple-4417-kettle`. You'll type it into the phone once.
 4. Click **Save**. Choose `setup` in the function dropdown and click **Run**. Google will ask for permission. Choose your account, then **Advanced → Go to Lift Log (unsafe) → Allow**. The warning appears because this is your own unverified script.
 5. **Deploy → New deployment →** click the gear icon and choose **Web app**:
@@ -24,7 +25,45 @@ Phone (Lift Log PWA)  ──POST──►  Apps Script web app  ──►  "Lift
    - Who has access: **Anyone** (the passphrase is what protects it)
 6. Click **Deploy** and copy the **Web app URL** (it ends in `/exec`).
 
-> If you change `Code.gs` later (e.g. v1.1 added delete support, v1.2 the coach plan): paste the new code over the old, **Save**, then **Deploy → Manage deployments →** edit (pencil icon) **→ Version: New version → Deploy**. The URL stays the same.
+> If you change the script later (e.g. v1.1 added delete support, v1.2 the coach plan, v1.3 weight and Fitbit): paste the new code over the old in each file (keep your passphrase on line 8 of `Code.gs`), **Save**, then **Deploy → Manage deployments →** edit (pencil icon) **→ Version: New version → Deploy**. The URL stays the same.
+
+### 1a. Weight and Fitbit sync (v1.3)
+
+This adds the same Apps Script project's sync of your Withings weight (through Home Assistant) and your Fitbit Air data (through the Google Health API).
+Secrets go in **Script Properties** only (Apps Script → ⚙ **Project Settings → Script Properties**), never in the code, because the repository is public.
+
+**a. Add the files and the OAuth2 library**
+1. In the Apps Script editor, add three script files with **+ → Script**: `Connections`, `HomeAssistant` and `GoogleHealth`. Paste in the matching file from `apps-script/`, and update `Code.gs` too.
+2. **Libraries → +**, Script ID `1B7FSrk5Zi6L1rSxxTDgDEUsPzlukDsi4KGuTMorsTQHhGBzBkMun4iDF` → **Look up**. Pick the latest version, keep the identifier **OAuth2**, then **Add**.
+
+**b. Home Assistant (weight)**
+1. In Home Assistant: click your name (**Profile**) → **Security** tab → **Long-lived access tokens → Create token**. Name it `Lift Log`, then copy the token. HA only shows it once.
+2. Add two Script Properties:
+   - `HA_URL`: your Nabu Casa remote URL, e.g. `https://abcdefgh1234.ui.nabu.casa` (no trailing slash needed)
+   - `HA_TOKEN`: the token from step 1
+
+   The script reads `sensor.withings_weight`, `sensor.withings_fat_ratio` and `sensor.withings_muscle_mass`.
+
+**c. Google Health (Fitbit)**
+1. Run `setup` once from the editor. Approve the new permissions, which add external requests, email and triggers. The execution log shows **this script's redirect URI**: `https://script.google.com/macros/d/<THIS_SCRIPT_ID>/usercallback`.
+   You can also find the Script ID under ⚙ **Project Settings → IDs**.
+2. In Google Cloud Console, open the **Meal Planner** project → **APIs & Services → Credentials** → the **Health Test** OAuth client. Under **Authorized redirect URIs**, **Add URI** and paste that redirect URI, then **Save**.
+3. Copy the client's **Client ID** and **Client secret** into this script's Script Properties as `GH_CLIENT_ID` and `GH_CLIENT_SECRET`.
+   They're the same values your test script keeps in its Script Properties. Use whatever it calls them, e.g. `CLIENT_ID` / `CLIENT_SECRET`.
+4. Optional: `ALERT_EMAIL` if alerts should go somewhere other than the Google account that owns the script.
+5. Authorise: run `authorizeGoogleHealth` from the editor and open the URL it logs, or use Lift Log → Settings → Connections → **Re-authorise** after deploying.
+   Sign in with the Google account that has your Fitbit data, and allow access. The tab says *Authorised. You can close this tab.*, and a catch-up sync starts. The first one backfills from 1 September 2026.
+
+**d. Triggers**: `setup` installs a single hourly trigger (`hourlyTick`) and is safe to re-run. It syncs weight every hour from 5–10am Perth, Fitbit at 7am, and does a catch-up of both at 9pm.
+
+**e. Deploy** a **New version** of the web app, as in the note above.
+
+**Re-authorising**
+- Google expires refresh tokens after 7 days while an OAuth app is in **Testing** mode. When a refresh fails, the Google Health row in **Settings → Connections** shows *⚠ Needs re-authorising*, a warning chip appears on Today, and you get one email with a link.
+  Tap **Re-authorise** (or the email link), allow access, and the missed days are caught up automatically.
+  Publishing the OAuth app to **In production** in the Cloud Console avoids the weekly expiry.
+- Home Assistant shows *⚠ Check HA token* if HA rejects the token (create a new one and update `HA_TOKEN`), or if HA has been unreachable for more than 24 hours. HA only keeps about 10 days of history, so a long outage can lose readings.
+- Each failure sends one email; nothing more is sent until a sync works again. Every row also has **Sync now**.
 
 ### 2. Host the app on GitHub Pages
 
@@ -57,6 +96,8 @@ Phone (Lift Log PWA)  ──POST──►  Apps Script web app  ──►  "Lift
 - **Coach notes** from the Brad's Fitness project (see `lift-log-plan.json` below) appear at the top of the session screen.
   Treadmill sessions also have a Notes box while you train; whatever you type there is carried into Finish.
 - Next session's weights are calculated automatically. Settings → Working weights lets you override one, e.g. after the project agrees a deload.
+- **Bodyweight** is pre-filled from this morning's Withings weigh-in when there is one (it says so at Finish), and you can still change it.
+- **Settings → Connections** shows the Home Assistant and Google Health syncs, with **Sync now** and **Re-authorise**. A warning chip on Today means one needs attention.
 
 ## Changing the program
 
@@ -72,6 +113,10 @@ Quick switches such as deadlift 1×5, the deadlift increment, micro-plates, HIIT
 | Sheet → **Sets** | One row per set: planned/actual weight, target/actual reps, result (done/failed/not_done), effort (easy/hard), time logged |
 | Sheet → **State** | Current next working weight and failure streak for each lift |
 | `lift-log.json` | Full history in one file, with a description of the fields, for the Claude project |
+| Sheet → **Weight** | One row per Withings weigh-in (via Home Assistant): date, time (Perth), weight_kg, fat_pct, muscle_kg, timestamp (UTC, used to avoid duplicates) |
+| `withings-weight.json` | All weigh-ins plus a `daily` series (first reading of each Perth day = the morning weigh-in), with a field description |
+| Sheet → **Health** | One row per day from the Fitbit Air: main sleep (start/end, asleep/awake, deep/light/REM minutes, efficiency), resting HR, HRV (RMSSD), respiratory rate, steps, active zone minutes, exercises (auto-detected ones marked) |
+| `health-daily.json` | The same days in full, including every exercise (type, times, avg/max HR, active zone minutes, `autoDetected`), plus `liftLogSessions`: per-minute heart rate (min/avg/max) for each Lift Log session, keyed by session id. Includes a field description |
 
 Re-syncing or editing a session replaces its rows, so nothing is duplicated. Settings → Data also has CSV exports and a full JSON backup/restore.
 
