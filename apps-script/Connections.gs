@@ -101,7 +101,7 @@ function checkSetup() {
   const ok = function (cond, text, fix) { lines.push((cond ? '✓ ' : '✗ ') + text + (cond || !fix ? '' : '  →  ' + fix)); return cond; };
 
   lines.push('— Script —');
-  ok(SYNC_TOKEN !== 'CHANGE-ME', 'Passphrase set on line 8 of Code.gs', 'put your passphrase back in place of CHANGE-ME');
+  ok(SYNC_TOKEN !== 'CHANGE-ME', 'Passphrase set (SYNC_TOKEN near the top of Code.gs)', 'replace CHANGE-ME with your passphrase, keeping the quotes');
   ok(typeof syncHomeAssistant === 'function', 'HomeAssistant file present', 'add a script file named HomeAssistant and paste HomeAssistant.gs');
   ok(typeof syncGoogleHealth === 'function', 'GoogleHealth file present', 'add a script file named GoogleHealth and paste GoogleHealth.gs');
   ok(typeof weighInFor_ === 'function' && typeof ghAuthUrl_ === 'function', 'Code.gs is the v1.3 version', 'paste the latest Code.gs');

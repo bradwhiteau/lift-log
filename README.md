@@ -25,7 +25,7 @@ Phone (Lift Log PWA)  ──POST──►  Apps Script web app  ──►  "Lift
    - Who has access: **Anyone** (the passphrase is what protects it)
 6. Click **Deploy** and copy the **Web app URL** (it ends in `/exec`).
 
-> If you change the script later (e.g. v1.1 added delete support, v1.2 the coach plan, v1.3 weight and Fitbit): paste the new code over the old in each file (keep your passphrase on line 8 of `Code.gs`), **Save**, then **Deploy → Manage deployments →** edit (pencil icon) **→ Version: New version → Deploy**. The URL stays the same.
+> If you change the script later (e.g. v1.1 added delete support, v1.2 the coach plan, v1.3 weight and Fitbit): paste the new code over the old in each file (keep your passphrase in `SYNC_TOKEN` near the top of `Code.gs`), **Save**, then **Deploy → Manage deployments →** edit (pencil icon) **→ Version: New version → Deploy**. The URL stays the same.
 
 ### 1a. Weight and Fitbit sync (v1.3)
 
