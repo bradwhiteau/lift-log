@@ -1,10 +1,14 @@
 // Offline cache for the app shell. Bump CACHE whenever any file changes so phones pick up the update.
-const CACHE = 'lift-log-v3';
+const CACHE = 'lift-log-v4';
 const FILES = ['./', 'index.html', 'styles.css', 'program.js', 'app.js', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png'];
 
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES)).then(() => self.skipWaiting()));
+  // cache: 'reload' skips the browser's HTTP cache (GitHub Pages allows 10 min), so a new version
+  // never gets packaged with stale copies of the old files.
+  e.waitUntil(caches.open(CACHE)
+    .then(c => c.addAll(FILES.map(f => new Request(f, { cache: 'reload' }))))
+    .then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', e => {

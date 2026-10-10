@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '1.1.1';
+  const APP_VERSION = '1.1.2';
   const P = window.PROGRAM;
   const $ = (sel, el = document) => el.querySelector(sel);
 
@@ -426,6 +426,7 @@
 
   // ---------- rendering ----------
   function render() {
+    if (ui.reloadPending && !ui.modal) { location.reload(); return; }
     document.querySelectorAll('.tabs [data-view]').forEach(b => b.classList.toggle('on', b.dataset.view === ui.view));
     const app = $('#app');
     app.innerHTML = ui.view === 'history' ? renderHistory() : ui.view === 'settings' ? renderSettings() : renderDay();
@@ -720,7 +721,7 @@
           <button class="btn" data-action="resync-all">Re-sync everything</button>
         </div>
       </section>
-      <p class="muted center">Lift Log ${APP_VERSION}</p>`;
+      <p class="muted center">Lift Log ${APP_VERSION} · <button class="link" data-action="check-update">Check for updates</button></p>`;
   }
 
   // ---------- modals ----------
@@ -1031,6 +1032,12 @@
       catch (e) { toast('Failed: ' + e.message); }
     },
     'sync-now'() { syncNow(true); },
+    async 'check-update'() {
+      if (!swReg) return toast('Updates are not available in this browser');
+      toast('Checking for updates…');
+      try { await swReg.update(); } catch (e) { return toast('Could not check: ' + e.message); }
+      setTimeout(() => { if (!ui.reloadPending) toast(`You have the latest version (${APP_VERSION})`); }, 3000);
+    },
     'resync-all'() {
       if (!confirm(`Send all ${sessions.length} sessions to Drive again? Existing rows are replaced, not duplicated.`)) return;
       sessions.forEach(s => enqueue(s.id, 'upsert')); syncNow(true);
@@ -1112,7 +1119,19 @@
   setInterval(tick, 250);
   setInterval(() => { if (queue.length && navigator.onLine) syncNow(); }, 60000);
 
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+  // Updates: check whenever the app is opened or brought back; when a new version takes over,
+  // reload into it (after any open dialog closes — drafts are saved, so nothing is lost).
+  let swReg = null;
+  if ('serviceWorker' in navigator) {
+    const hadController = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.register('sw.js').then(r => { swReg = r; }).catch(() => {});
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!hadController || ui.reloadPending) return;
+      ui.reloadPending = true; toast('Updating Lift Log…');
+      if (!ui.modal) setTimeout(() => location.reload(), 600);
+    });
+    document.addEventListener('visibilitychange', () => { if (!document.hidden && swReg) swReg.update().catch(() => {}); });
+  }
 
   render();
   syncNow();
