@@ -250,8 +250,10 @@ function syncGoogleHealth() {
         markSuccess_('googlehealth', { syncedThrough: today, lastReadingAt: latestReading_(days) });
       }
     } catch (e) {
-      if (!e.auth) throw e;
-      markFailure_('googlehealth', e.message + ' — needs re-authorising', true);   // syncedThrough unchanged: missed days retried later
+      // syncedThrough is unchanged either way, so missed days are retried on the next run.
+      if (e.auth) markFailure_('googlehealth', e.message + ' — needs re-authorising', true);
+      else markFailure_('googlehealth', 'Unexpected error: ' + e.message, false);
+      Logger.log(e.stack || e);
     }
   });
 }
@@ -292,7 +294,8 @@ function ghSleep_(points) {
  */
 function ghExercises_(points, oldDays) {
   const known = {};
-  oldDays.forEach(function (d) { (d.exercises || []).forEach(function (x) { if (x.id) known[x.id] = x; }); });
+  // Max HR is cached per time window (copies of a workout share one), from earlier runs and within this run.
+  oldDays.forEach(function (d) { (d.exercises || []).forEach(function (x) { if (x.startIso) known[x.startIso + '|' + x.endIso] = x.maxHr; }); });
   const byDate = {};
   points.forEach(function (pt) {
     const e = pt.exercise; if (!e || !e.interval) return;
@@ -300,7 +303,8 @@ function ghExercises_(points, oldDays) {
     const start = civilEnd_(e.interval, 'start'), end = civilEnd_(e.interval, 'end');
     const rm = (pt.dataSource && pt.dataSource.recordingMethod) || null;
     const id = pt.name || (e.exerciseType + '@' + start.iso);
-    let maxHr = known[id] && known[id].endIso === end.iso ? known[id].maxHr : undefined;
+    const win = start.iso + '|' + end.iso;
+    let maxHr = known[win];
     if (maxHr === undefined) {
       try {
         const hr = ghHeartRate_(start.iso, end.iso);
@@ -309,6 +313,7 @@ function ghExercises_(points, oldDays) {
         if (err.auth) throw err;
         maxHr = null;   // no max HR is better than losing the exercise
       }
+      known[win] = maxHr;
     }
     (byDate[start.date] = byDate[start.date] || []).push({
       id: id, type: e.exerciseType || null, name: e.displayName || null,
@@ -321,8 +326,29 @@ function ghExercises_(points, oldDays) {
       autoDetected: rm === 'PASSIVELY_MEASURED' || rm === 'DERIVED' ? true : rm === 'ACTIVELY_MEASURED' || rm === 'MANUAL' ? false : null,
     });
   });
-  Object.keys(byDate).forEach(function (d) { byDate[d].sort(function (a, b) { return a.start < b.start ? -1 : 1; }); });
+  Object.keys(byDate).forEach(function (d) { byDate[d] = dedupeExercises_(byDate[d]); });
   return byDate;
+}
+
+/**
+ * A workout started on the watch (ACTIVELY_MEASURED) also arrives as one or two PASSIVELY_MEASURED copies with the
+ * same start and end. Keep one per window, preferring the one Brad started (then the one with the most data), and
+ * only call it auto-detected when every copy was passive.
+ */
+function dedupeExercises_(list) {
+  const started = function (x) { return x.recordingMethod === 'ACTIVELY_MEASURED' || x.recordingMethod === 'MANUAL'; };
+  const filled = function (x) { return ['avgHr', 'maxHr', 'activeZoneMinutes', 'caloriesKcal', 'steps'].filter(function (k) { return x[k] != null; }).length; };
+  const groups = {};
+  list.forEach(function (x) { (groups[x.start + '|' + x.end] = groups[x.start + '|' + x.end] || []).push(x); });
+  return Object.keys(groups).sort().map(function (k) {
+    const g = groups[k].sort(function (a, b) { return (started(b) - started(a)) || (filled(b) - filled(a)); });
+    const keep = Object.assign({}, g[0]);
+    if (g.some(started)) keep.autoDetected = false;
+    else if (keep.autoDetected === false) keep.autoDetected = null;
+    if (keep.maxHr == null) keep.maxHr = g.map(function (x) { return x.maxHr; }).filter(function (v) { return v != null; })[0] || null;
+    if (g.length > 1) keep.copies = g.length;
+    return keep;
+  });
 }
 
 /** Per-minute heart rate for Lift Log sessions (start/end from lift-log.json, the same data as the Sessions tab). */
@@ -387,9 +413,11 @@ function writeHealth_(days, sessions) {
       'minutesAsleep/minutesAwake, deepMin/lightMin/remMin, efficiencyPct = asleep / (asleep + awake)). restingHr = daily resting ' +
       'heart rate (bpm). hrvRmssdMs = nightly HRV as RMSSD in ms (Fitbit\'s daily HRV); hrvDeepSleepRmssdMs = RMSSD during deep ' +
       'sleep. respiratoryRate = breaths/min during the main sleep. steps = daily total. exercises = workouts that started that day: ' +
-      'type, local start/end, durationMin, avgHr/maxHr (bpm), activeZoneMinutes, calories, steps, distanceKm; autoDetected=true ' +
-      'means the watch logged it on its own (recordingMethod PASSIVELY_MEASURED/DERIVED) rather than Brad starting it, and these ' +
-      'can be false (e.g. "Swim" sessions that never happened); null = unknown. activeZoneMinutes on the day = sum over exercises. ' +
+      'type, local start/end, durationMin, avgHr/maxHr (bpm), activeZoneMinutes, calories, steps, distanceKm. Duplicates of the ' +
+      'same workout (same start/end, arriving from several sources) are merged into one; "copies" says how many there were. ' +
+      'autoDetected=true means the watch logged it on its own (only passive recordings, no copy that Brad started) and these ' +
+      'can be false (e.g. "Swim" sessions that never happened); false = Brad started it on the watch; null = unknown. ' +
+      'activeZoneMinutes on the day = sum over exercises. ' +
       'Null means no data. "liftLogSessions": heart rate during each Lift Log session, keyed by the Lift Log session id ' +
       '(see lift-log.json): summary min/avg/max bpm and perMinute (local HH:mm).',
     updated_at: new Date().toISOString(),

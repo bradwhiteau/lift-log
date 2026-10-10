@@ -118,7 +118,7 @@ Quick switches such as deadlift 1×5, the deadlift increment, micro-plates, HIIT
 | Sheet → **Weight** | One row per Withings weigh-in (via Home Assistant): date, time (Perth), weight_kg, fat_pct, muscle_kg, timestamp (UTC, used to avoid duplicates) |
 | `withings-weight.json` | All weigh-ins plus a `daily` series (first reading of each Perth day = the morning weigh-in), with a field description |
 | Sheet → **Health** | One row per day from the Fitbit Air: main sleep (start/end, asleep/awake, deep/light/REM minutes, efficiency), resting HR, HRV (RMSSD), respiratory rate, steps, active zone minutes, exercises (auto-detected ones marked) |
-| `health-daily.json` | The same days in full, including every exercise (type, times, avg/max HR, active zone minutes, `autoDetected`), plus `liftLogSessions`: per-minute heart rate (min/avg/max) for each Lift Log session, keyed by session id. Includes a field description |
+| `health-daily.json` | The same days in full, including every exercise (type, times, avg/max HR, active zone minutes, `autoDetected`; duplicate copies of a workout are merged), plus `liftLogSessions`: per-minute heart rate (min/avg/max) for each Lift Log session, keyed by session id. Includes a field description |
 
 Re-syncing or editing a session replaces its rows, so nothing is duplicated. Settings → Data also has CSV exports and a full JSON backup/restore.
 
