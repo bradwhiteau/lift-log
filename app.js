@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '1.1.0';
+  const APP_VERSION = '1.1.1';
   const P = window.PROGRAM;
   const $ = (sel, el = document) => el.querySelector(sel);
 
@@ -759,7 +759,9 @@
     if (m.type === 'reps') {
       inner = `<h2>Set ${m.set + 1} failed</h2><p class="muted">How many reps did you get?</p>
         <div class="grid5">${[0, 1, 2, 3, 4].map(n => `<button class="btn big" data-action="pick-reps" data-n="${n}">${n}</button>`).join('')}</div>
-        <div class="row">${m.canClear ? `<button class="btn" data-action="clear-set">Clear set</button>` : ''}<button class="btn ghost" data-action="close-modal">Cancel</button></div>`;
+        <div class="row">${m.canClear
+          ? `<button class="btn" data-action="clear-set">Clear set</button><button class="btn ghost" data-action="close-modal">Cancel</button>`
+          : `<button class="btn ghost" data-action="clear-set">Cancel — clear set</button>`}</div>`;
     } else if (m.type === 'weight') {
       const e = editing().exercises[m.ex];
       inner = `<h2>${esc(e.name)} weight</h2>
@@ -1082,7 +1084,11 @@
       const host = el.closest('[data-sid]');
       if (host) ui.sid = host.dataset.sid;
       actions[el.dataset.action](el, e);
-    } else if (e.target.id === 'modal') closeModal();
+    } else if (e.target.id === 'modal') {
+      // Tapping outside the "set failed" sheet while cycling past hard completes the cycle back to empty.
+      if (ui.modal && ui.modal.type === 'reps' && !ui.modal.canClear) actions['clear-set']();
+      else closeModal();
+    }
   });
   document.addEventListener('change', e => {
     const el = e.target;

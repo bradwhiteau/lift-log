@@ -1,7 +1,7 @@
 # Lift Log
 
 An offline-first phone app (PWA) for tracking Stronglifts 5x5, treadmill walks and HIIT sessions.
-Results sync to a Google Sheet and `lift-log.json` in `My Drive/Fitness`, where the "Brad's Fitness" Claude project can read them.
+Results sync to a Google Sheet and `lift-log.json` in `My Drive/06 Interests/Fitness`, where the "Brad's Fitness" Claude project can read them.
 
 ## How it fits together
 
@@ -15,7 +15,7 @@ Phone (Lift Log PWA)  ──POST──►  Apps Script web app  ──►  "Lift
 
 ### 1. Create the Sheet and sync script (about 5 minutes, on the PC)
 
-1. In Google Drive, open **My Drive → Fitness**, then **New → Google Sheets**. Name it **Lift Log**.
+1. In Google Drive, open **My Drive → 06 Interests → Fitness**, then **New → Google Sheets**. Name it **Lift Log**.
 2. In the Sheet: **Extensions → Apps Script**. Delete the sample code and paste in everything from `apps-script/Code.gs`.
 3. On line 8, replace `CHANGE-ME` with a long passphrase of your own, e.g. `squat-rack-purple-4417-kettle`. You'll type it into the phone once.
 4. Click **Save**. Choose `setup` in the function dropdown and click **Run**. Google will ask for permission. Choose your account, then **Advanced → Go to Lift Log (unsafe) → Allow**. The warning appears because this is your own unverified script.
@@ -43,6 +43,7 @@ Phone (Lift Log PWA)  ──POST──►  Apps Script web app  ──►  "Lift
 - **Today** shows the date, program week and the planned session. Arrows move between days; future days show the plan.
 - Tap **Start workout** when you begin (this records the start time for matching Fitbit heart-rate data), then tap each set:
   empty → **✓ easy** (90 s rest) → **✓ hard** (3 min) → **✗ failed** (asks how many reps, 5 min rest).
+  On the "how many reps" sheet, **Cancel** (or tapping outside it) completes the cycle back to empty, so a mis-tap is easy to undo.
   Tap a failed set again to change its reps or clear it.
 - Tap the **weight** on an exercise to change it for today. Planned and actual weights are both logged.
 - **Treadmill walk / HIIT:** tap **Start session** and the app guides you segment by segment (big countdown, current speed, what's next).
