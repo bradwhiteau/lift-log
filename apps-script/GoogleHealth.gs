@@ -61,6 +61,15 @@ function authCallback(request) {
     .addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
 
+/** Editor helper: rebuild every day from GH_BACKFILL_FROM (e.g. after a fix to how data is processed). */
+function resyncGoogleHealthFromStart() {
+  const st = status_('googlehealth');
+  delete st.syncedThrough;
+  saveStatus_('googlehealth', st);
+  syncGoogleHealth();
+  Logger.log('Rebuilt from %s. Last error: %s', GH_BACKFILL_FROM, status_('googlehealth').lastError || 'none');
+}
+
 function ghCatchUpOnce() {
   ScriptApp.getProjectTriggers().forEach(function (t) {
     if (t.getHandlerFunction() === 'ghCatchUpOnce') ScriptApp.deleteTrigger(t);
