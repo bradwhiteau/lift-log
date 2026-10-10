@@ -92,6 +92,73 @@ function installTriggers_() {
   ScriptApp.newTrigger('hourlyTick').timeBased().everyHours(1).create();
 }
 
+/**
+ * Editor helper: run it and read the execution log. Checks every v1.3 setup step and makes a live test call to
+ * Home Assistant and Google Health. Never prints secret values.
+ */
+function checkSetup() {
+  const p = props_(), lines = [];
+  const ok = function (cond, text, fix) { lines.push((cond ? '✓ ' : '✗ ') + text + (cond || !fix ? '' : '  →  ' + fix)); return cond; };
+
+  lines.push('— Script —');
+  ok(SYNC_TOKEN !== 'CHANGE-ME', 'Passphrase set on line 8 of Code.gs', 'put your passphrase back in place of CHANGE-ME');
+  ok(typeof syncHomeAssistant === 'function', 'HomeAssistant file present', 'add a script file named HomeAssistant and paste HomeAssistant.gs');
+  ok(typeof syncGoogleHealth === 'function', 'GoogleHealth file present', 'add a script file named GoogleHealth and paste GoogleHealth.gs');
+  ok(typeof weighInFor_ === 'function' && typeof ghAuthUrl_ === 'function', 'Code.gs is the v1.3 version', 'paste the latest Code.gs');
+  ok(typeof OAuth2 !== 'undefined', 'OAuth2 library added (identifier "OAuth2")', 'Libraries → + → Script ID 1B7FSrk5Zi6L1rSxxTDgDEUsPzlukDsi4KGuTMorsTQHhGBzBkMun4iDF');
+  ok(!!p.getProperty('SPREADSHEET_ID'), 'setup has been run', 'run setup');
+  ok(ScriptApp.getProjectTriggers().some(function (t) { return t.getHandlerFunction() === 'hourlyTick'; }), 'Hourly trigger installed', 'run setup');
+  ok(!!ScriptApp.getService().getUrl(), 'Web app deployed', 'Deploy → Manage deployments → edit → New version → Deploy');
+
+  lines.push('— Home Assistant —');
+  const haUrl = (p.getProperty('HA_URL') || '').trim(), haToken = (p.getProperty('HA_TOKEN') || '').trim();
+  const urlOk = ok(/^https:\/\/[^/]+(\/)?$/.test(haUrl), 'HA_URL set (https://…, no path)',
+    haUrl ? 'it should be just the Nabu Casa address, e.g. https://abcd1234.ui.nabu.casa' : 'add Script Property HA_URL');
+  const tokOk = ok(haToken.length > 100, 'HA_TOKEN set (' + haToken.length + ' characters)', haToken ? 'a long-lived token is ~180 characters; check it was copied in full' : 'add Script Property HA_TOKEN');
+  if (urlOk && tokOk) {
+    try {
+      const base = haUrl.replace(/\/+$/, '');
+      const res = UrlFetchApp.fetch(base + '/api/', { headers: { Authorization: 'Bearer ' + haToken }, muteHttpExceptions: true });
+      const code = res.getResponseCode();
+      if (ok(code === 200, 'Home Assistant reachable and token accepted (HTTP ' + code + ')',
+        code === 401 ? 'token rejected: create a new long-lived token' : 'check the Nabu Casa address and that remote access is on')) {
+        Object.keys(HA_ENTITIES).forEach(function (id) {
+          const r = UrlFetchApp.fetch(base + '/api/states/' + id, { headers: { Authorization: 'Bearer ' + haToken }, muteHttpExceptions: true });
+          const st = r.getResponseCode() === 200 ? JSON.parse(r.getContentText()).state : null;
+          ok(r.getResponseCode() === 200, id + (st != null ? ' = ' + st : ''), 'entity not found: check its id in HA (Settings → Entities)');
+        });
+      }
+    } catch (e) { ok(false, 'Home Assistant reachable', e.message.replace(/https?:\/\/\S+/g, '')); }
+  }
+
+  lines.push('— Google Health —');
+  const cid = (p.getProperty('GH_CLIENT_ID') || '').trim();
+  ok(/\.apps\.googleusercontent\.com$/.test(cid), 'GH_CLIENT_ID set', cid ? 'should end in .apps.googleusercontent.com' : 'add Script Property GH_CLIENT_ID');
+  ok(!!(p.getProperty('GH_CLIENT_SECRET') || '').trim(), 'GH_CLIENT_SECRET set', 'add Script Property GH_CLIENT_SECRET');
+  lines.push('  Redirect URI that must be on the "Health Test" client: ' + ghRedirectUri_());
+  if (typeof OAuth2 !== 'undefined' && cid) {
+    const svc = ghService_();
+    if (ok(!!svc.getToken(), 'Authorised (token stored)', 'run authorizeGoogleHealth and open the link it logs')) {
+      if (ok(svc.hasAccess(), 'Token valid / refreshes', 'needs re-authorising: ' + (svc.getLastError() || 'run authorizeGoogleHealth'))) {
+        try {
+          const y = addDaysYmd_(ymd_(new Date()), -1);
+          const j = ghFetch_('post', 'steps/dataPoints:dailyRollUp', { range: { start: civilDate_(y), end: civilDate_(ymd_(new Date())) }, windowSizeDays: 1 });
+          const pt = (j.rollupDataPoints || [])[0];
+          ok(true, 'Health API call works (steps yesterday: ' + (pt && pt.steps ? pt.steps.countSum : 'none') + ')');
+        } catch (e) { ok(false, 'Health API call works', e.message); }
+      }
+    }
+  }
+
+  lines.push('— Last syncs —');
+  ['homeassistant', 'googlehealth'].forEach(function (s) {
+    const st = status_(s);
+    lines.push('  ' + SERVICE_NAMES[s] + ': ' + (st.lastSuccessAt ? 'last success ' + st.lastSuccessAt : 'never succeeded') +
+      (st.lastError ? ' · last error: ' + st.lastError : ''));
+  });
+  Logger.log('\n' + lines.join('\n'));
+}
+
 /** Runs fn unless another sync holds the lock (then skips; the next run catches up). */
 function withSyncLock_(fn) {
   const lock = LockService.getDocumentLock() || LockService.getScriptLock();

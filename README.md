@@ -58,6 +58,8 @@ Secrets go in **Script Properties** only (Apps Script → ⚙ **Project Settings
 
 **e. Deploy** a **New version** of the web app, as in the note above.
 
+**f. Check it**: run `checkSetup` from the editor and read the execution log. It checks each step above with ✓ or ✗ and says how to fix anything missing. It makes a live test call to Home Assistant and the Health API, and never prints secret values.
+
 **Re-authorising**
 - Google expires refresh tokens after 7 days while an OAuth app is in **Testing** mode. When a refresh fails, the Google Health row in **Settings → Connections** shows *⚠ Needs re-authorising*, a warning chip appears on Today, and you get one email with a link.
   Tap **Re-authorise** (or the email link), allow access, and the missed days are caught up automatically.
