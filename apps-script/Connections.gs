@@ -2,7 +2,9 @@
  * Connection status, alert emails and the schedule for the Home Assistant (weight) and Google Health (Fitbit)
  * syncs. Status lives in Script Properties as STATUS_<service> so the editor, triggers and web app all see it.
  */
-const SERVICE_NAMES = { homeassistant: 'Home Assistant (weight)', googlehealth: 'Google Health (Fitbit)' };
+const SERVICE_NAMES = {
+  homeassistant: 'Home Assistant (weight)', bloodpressure: 'Home Assistant (blood pressure)', googlehealth: 'Google Health (Fitbit)',
+};
 const UNREACHABLE_GRACE_MS = 24 * 3600 * 1000;   // HA being down this long needs Brad's attention
 
 function props_() { return PropertiesService.getScriptProperties(); }
@@ -63,12 +65,17 @@ function authorizeLink_() {
 /** Status for the app's Connections card. */
 function connections_() {
   const p = props_();
-  const ha = status_('homeassistant'), gh = status_('googlehealth');
+  const ha = status_('homeassistant'), bp = status_('bloodpressure'), gh = status_('googlehealth');
   return {
     homeassistant: {
       connected: !!(p.getProperty('HA_URL') && p.getProperty('HA_TOKEN')) && !ha.needsAttention,
       lastSyncAt: ha.lastSuccessAt || null, lastReadingAt: ha.lastReadingAt || null,
       lastError: ha.lastError || null, needsAttention: !!ha.needsAttention,
+    },
+    bloodpressure: {   // same HA connection as weight: token problems show on the homeassistant row
+      connected: !!(p.getProperty('HA_URL') && p.getProperty('HA_TOKEN')) && !ha.needsAttention,
+      lastSyncAt: bp.lastSuccessAt || null, lastReadingAt: bp.lastReadingAt || null, lastValue: bp.lastValue || null,
+      lastError: bp.lastError || null, needsAttention: false,
     },
     googlehealth: {
       connected: ghHasToken_() && !gh.needsAttention,
@@ -127,6 +134,14 @@ function checkSetup() {
           const st = r.getResponseCode() === 200 ? JSON.parse(r.getContentText()).state : null;
           ok(r.getResponseCode() === 200, id + (st != null ? ' = ' + st : ''), 'entity not found: check its id in HA (Settings → Entities)');
         });
+        Object.keys(BP_ENTITIES).forEach(function (id) {
+          const r = UrlFetchApp.fetch(base + '/api/states/' + id, { headers: { Authorization: 'Bearer ' + haToken }, muteHttpExceptions: true });
+          const j = r.getResponseCode() === 200 ? JSON.parse(r.getContentText()) : null;
+          const date = j && j.attributes && j.attributes.date;
+          if (ok(!!j, id + (j ? ' = ' + j.state + (date ? ' (measured ' + date + ')' : '') : ''), 'entity not found: check its id in HA (Settings → Entities)')) {
+            ok(!!Date.parse(date || ''), id + ' has a "date" attribute', 'the reading time comes from this attribute; check the companion app sensor');
+          }
+        });
       }
     } catch (e) { ok(false, 'Home Assistant reachable', e.message.replace(/https?:\/\/\S+/g, '')); }
   }
@@ -151,7 +166,7 @@ function checkSetup() {
   }
 
   lines.push('— Last syncs —');
-  ['homeassistant', 'googlehealth'].forEach(function (s) {
+  ['homeassistant', 'bloodpressure', 'googlehealth'].forEach(function (s) {
     const st = status_(s);
     lines.push('  ' + SERVICE_NAMES[s] + ': ' + (st.lastSuccessAt ? 'last success ' + st.lastSuccessAt : 'never succeeded') +
       (st.lastError ? ' · last error: ' + st.lastError : ''));

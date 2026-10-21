@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '1.3.0';
+  const APP_VERSION = '1.4.0';
   const P = window.PROGRAM;
   const $ = (sel, el = document) => el.querySelector(sel);
 
@@ -435,7 +435,10 @@
       if (!x) status = '<span class="muted">Not checked yet</span>';
       else if (x.needsAttention) status = `<span class="warn-text">⚠ ${badText}</span>`;
       else if (!x.lastSyncAt) status = '<span class="muted">Not synced yet</span>';
-      else status = `${okText(x)} <span class="ok-text">✓</span>`;
+      else {
+        const t = okText(x), o = typeof t === 'string' ? { main: t } : t;   // or {main, sub} for a second muted line
+        status = `${o.main} <span class="ok-text">✓</span>${o.sub ? `<div class="muted small">${o.sub}</div>` : ''}`;
+      }
       const detail = x && x.lastError ? `<div class="muted small">${esc(x.lastError)}</div>` : '';
       return `<div class="conn-row">
         <div class="conn-main"><b>${title}</b><div>${status}</div>${detail}</div>
@@ -446,6 +449,9 @@
     };
     return `<section class="card" id="connections"><h3>Connections</h3>
       ${row('homeassistant', 'Home Assistant (weight)', x => x.lastReadingAt ? `Last weigh-in ${fmtWhen(x.lastReadingAt)}` : `Checked ${fmtWhen(x.lastSyncAt)}, no weigh-ins yet`, 'Check HA token', false)}
+      ${row('bloodpressure', 'Blood pressure (Omron)', x => x.lastReadingAt
+        ? { main: `Last reading ${x.lastValue ? esc(x.lastValue) + ' · ' : ''}${fmtWhen(x.lastReadingAt)}`, sub: `Synced ${fmtWhen(x.lastSyncAt)}` }
+        : `Synced ${fmtWhen(x.lastSyncAt)}, no readings yet`, 'Check HA token', false)}
       ${row('googlehealth', 'Google Health (Fitbit)', x => `Last synced ${fmtWhen(x.lastSyncAt)}`, 'Needs re-authorising', true)}
       ${ui.connError ? `<p class="muted"><span class="warn-text">${esc(ui.connError)}</span></p>` : ''}
     </section>`;

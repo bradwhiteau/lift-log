@@ -46,10 +46,10 @@ function doPost(e) {
  * GET endpoints, all needing &token=<SYNC_TOKEN>:
  *   action=plan                        lift-log-plan.json (written by the Brad's Fitness project), or {}
  *   action=weight&date=YYYY-MM-DD      that day's morning weigh-in from Home Assistant, or {}
- *   action=connections                 status of the Home Assistant and Google Health connections
+ *   action=connections                 status of the weight, blood pressure and Google Health syncs
  *   action=auth&service=googlehealth   a fresh Google Health authorisation URL (JSON, for the app)
  *   action=authorize                   a page linking to a fresh authorisation URL (for the alert email)
- *   action=sync&service=homeassistant|googlehealth   run that sync now
+ *   action=sync&service=homeassistant|bloodpressure|googlehealth   run that sync now (HA covers weight + BP)
  * No action is a health check.
  */
 function doGet(e) {
@@ -73,7 +73,7 @@ function doGet(e) {
           '<a href="' + ghAuthUrl_() + '" target="_top">Authorise Google Health for Lift Log</a></p>')
           .setTitle('Lift Log').addMetaTag('viewport', 'width=device-width, initial-scale=1');
       case 'sync':
-        if (p.service === 'homeassistant') syncHomeAssistant();
+        if (p.service === 'homeassistant' || p.service === 'bloodpressure') syncHomeAssistant();
         else if (p.service === 'googlehealth') syncGoogleHealth();
         else return out_({ ok: false, error: 'Unknown service' });
         return out_({ ok: true, services: connections_() });
@@ -91,7 +91,7 @@ function doGet(e) {
 function setup() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   PropertiesService.getScriptProperties().setProperty('SPREADSHEET_ID', ss.getId());
-  ['Sessions', 'Sets', 'State', 'Weight', 'Health'].forEach(function (name) { if (!ss.getSheetByName(name)) ss.insertSheet(name); });
+  ['Sessions', 'Sets', 'State', 'Weight', 'Blood Pressure', 'Health'].forEach(function (name) { if (!ss.getSheetByName(name)) ss.insertSheet(name); });
   const first = ss.getSheetByName('Sheet1');
   if (first && ss.getSheets().length > 1 && first.getLastRow() === 0) ss.deleteSheet(first);
   folder_(ss); // touches Drive so its permission is granted now

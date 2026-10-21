@@ -36,13 +36,16 @@ Secrets go in **Script Properties** only (Apps Script → ⚙ **Project Settings
 1. In the Apps Script editor, add three script files with **+ → Script**: `Connections`, `HomeAssistant` and `GoogleHealth`. Paste in the matching file from `apps-script/`, and update `Code.gs` too.
 2. **Libraries → +**, Script ID `1B7FSrk5Zi6L1rSxxTDgDEUsPzlukDsi4KGuTMorsTQHhGBzBkMun4iDF` → **Look up**. Pick the latest version, keep the identifier **OAuth2**, then **Add**.
 
-**b. Home Assistant (weight)**
+**b. Home Assistant (weight and blood pressure)**
 1. In Home Assistant: click your name (**Profile**) → **Security** tab → **Long-lived access tokens → Create token**. Name it `Lift Log`, then copy the token. HA only shows it once.
 2. Add two Script Properties:
    - `HA_URL`: your Nabu Casa remote URL, e.g. `https://abcdefgh1234.ui.nabu.casa` (no trailing slash needed)
    - `HA_TOKEN`: the token from step 1
 
-   The script reads `sensor.withings_weight`, `sensor.withings_fat_ratio` and `sensor.withings_muscle_mass`.
+   The script reads `sensor.withings_weight`, `sensor.withings_fat_ratio` and `sensor.withings_muscle_mass` (Withings integration).
+   For blood pressure it reads `sensor.ecto_8_systolic_blood_pressure` and `sensor.ecto_8_diastolic_blood_pressure` (mmHg), the HA companion app sensors fed from Health Connect / Omron Connect.
+   Each reading's time comes from the sensors' `date` attribute, which is when it was measured, not from when HA received it.
+   Systolic and diastolic are paired by that time. Nothing else needs setting up: blood pressure uses the same `HA_URL` and `HA_TOKEN`.
 
 **c. Google Health (Fitbit)**
 1. Run `setup` once from the editor. Approve the new permissions, which add external requests, email and triggers. The execution log shows **this script's redirect URI**: `https://script.google.com/macros/d/<THIS_SCRIPT_ID>/usercallback`.
@@ -54,7 +57,7 @@ Secrets go in **Script Properties** only (Apps Script → ⚙ **Project Settings
 5. Authorise: run `authorizeGoogleHealth` from the editor and open the URL it logs, or use Lift Log → Settings → Connections → **Re-authorise** after deploying.
    Sign in with the Google account that has your Fitbit data, and allow access. The tab says *Authorised. You can close this tab.*, and a catch-up sync starts. The first one backfills from 1 September 2026.
 
-**d. Triggers**: `setup` installs a single hourly trigger (`hourlyTick`) and is safe to re-run. It syncs weight every hour from 5–10am Perth, Fitbit at 7am, and does a catch-up of both at 9pm.
+**d. Triggers**: `setup` installs a single hourly trigger (`hourlyTick`) and is safe to re-run. It syncs weight and blood pressure every hour from 5–10am Perth, Fitbit at 7am, and does a catch-up of all three at 9pm.
 
 **e. Deploy** a **New version** of the web app, as in the note above.
 
@@ -99,7 +102,8 @@ Secrets go in **Script Properties** only (Apps Script → ⚙ **Project Settings
   Treadmill sessions also have a Notes box while you train; whatever you type there is carried into Finish.
 - Next session's weights are calculated automatically. Settings → Working weights lets you override one, e.g. after the project agrees a deload.
 - **Bodyweight** is pre-filled from this morning's Withings weigh-in when there is one (it says so at Finish), and you can still change it.
-- **Settings → Connections** shows the Home Assistant and Google Health syncs, with **Sync now** and **Re-authorise**. A warning chip on Today means one needs attention.
+- **Settings → Connections** shows the weight, blood pressure and Google Health syncs, with **Sync now** and **Re-authorise**. A warning chip on Today means one needs attention.
+  The blood pressure row shows the last reading (e.g. 126/80), when it was taken, and when it last synced. A Home Assistant token problem shows on the weight row, since both use the same token.
 
 ## Changing the program
 
@@ -117,6 +121,8 @@ Quick switches such as deadlift 1×5, the deadlift increment, micro-plates, HIIT
 | `lift-log.json` | Full history in one file, with a description of the fields, for the Claude project |
 | Sheet → **Weight** | One row per Withings weigh-in (via Home Assistant): date, time (Perth), weight_kg, fat_pct, muscle_kg, timestamp (UTC, used to avoid duplicates) |
 | `withings-weight.json` | All weigh-ins plus a `daily` series (first reading of each Perth day = the morning weigh-in), with a field description |
+| Sheet → **Blood Pressure** | One row per reading (Omron, via Home Assistant): date, time (Perth local, when measured), systolic, diastolic (mmHg), source |
+| `blood-pressure.json` | All blood pressure readings with Perth date/time plus the UTC `timestamp` of the measurement (used to avoid duplicates), and a field description. Home Assistant keeps only ~10 days of history, so readings are kept from when they were synced |
 | Sheet → **Health** | One row per day from the Fitbit Air: main sleep (start/end, asleep/awake, deep/light/REM minutes, efficiency), resting HR, HRV (RMSSD), respiratory rate, steps, active zone minutes, exercises (auto-detected ones marked) |
 | `health-daily.json` | The same days in full, including every exercise (type, times, avg/max HR, active zone minutes, `autoDetected`; duplicate copies of a workout are merged), plus `liftLogSessions`: per-minute heart rate (min/avg/max) for each Lift Log session, keyed by session id. Includes a field description |
 
