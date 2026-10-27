@@ -21,6 +21,7 @@ function doPost(e) {
 
   const ss = spreadsheet_();
   if (body.action === 'ping') return out_({ ok: true, message: 'Connected to "' + ss.getName() + '"' });
+  if (body.action === 'now') return out_(writeNowDoc_(ss, body.doc));
   const isUpsert = body.action === 'upsert' && body.session && body.session.id;
   const isDelete = body.action === 'delete' && body.id;
   if (!isUpsert && !isDelete) return out_({ ok: false, error: 'Unknown action — redeploy the latest Code.gs' });
@@ -97,6 +98,43 @@ function setup() {
   folder_(ss); // touches Drive so its permission is granted now
   installTriggers_();
   Logger.log('Setup complete for "%s". Google Health redirect URI: %s', ss.getName(), ghRedirectUri_());
+}
+
+const NOW_DOC_NAME = 'Lift Log Now';
+
+/**
+ * Writes the app's plain-English plan into the Google Doc "Lift Log Now", next to this Sheet, so Claude can read it
+ * in chat and voice (its Drive connector reads Docs, not the app's data). `lines` = [{ t: 'h1'|'h2'|'h3'|'p'|'li', text }].
+ */
+function writeNowDoc_(ss, lines) {
+  if (!Array.isArray(lines) || !lines.length || lines.length > 500) return { ok: false, error: 'Bad doc' };
+  const props = PropertiesService.getScriptProperties();
+  let doc = null;
+  const id = props.getProperty('NOW_DOC_ID');
+  if (id) { try { doc = DocumentApp.openById(id); } catch (err) { doc = null; } }
+  if (!doc) {
+    doc = DocumentApp.create(NOW_DOC_NAME);
+    DriveApp.getFileById(doc.getId()).moveTo(folder_(ss));
+    props.setProperty('NOW_DOC_ID', doc.getId());
+  }
+  const body = doc.getBody();
+  body.clear();
+  const H = { h1: DocumentApp.ParagraphHeading.HEADING1, h2: DocumentApp.ParagraphHeading.HEADING2, h3: DocumentApp.ParagraphHeading.HEADING3 };
+  lines.forEach(function (l) {
+    const text = String((l && l.text) || '').slice(0, 2000);
+    if (l && l.t === 'li') body.appendListItem(text).setGlyphType(DocumentApp.GlyphType.BULLET);
+    else { const p = body.appendParagraph(text); if (l && H[l.t]) p.setHeading(H[l.t]); }
+  });
+  // clear() leaves one empty paragraph at the top: drop it.
+  const first = body.getChild(0);
+  if (body.getNumChildren() > 1 && first.getType() === DocumentApp.ElementType.PARAGRAPH && first.asParagraph().getText() === '') body.removeChild(first);
+  doc.saveAndClose();
+  return { ok: true };
+}
+
+/** Run once from the editor after updating: grants the Google Docs permission and creates "Lift Log Now". */
+function setupNowDoc() {
+  writeNowDoc_(spreadsheet_(), [{ t: 'h1', text: NOW_DOC_NAME }, { t: 'p', text: 'Waiting for the Lift Log app to send its plan. Open the app to fill this in.' }]);
 }
 
 function spreadsheet_() {

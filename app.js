@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '1.4.0';
+  const APP_VERSION = '1.5.0';
   const P = window.PROGRAM;
   const $ = (sel, el = document) => el.querySelector(sel);
 
@@ -10,6 +10,7 @@
     settings: 'll.settings', sessions: 'll.sessions', drafts: 'll.drafts', legacyActive: 'll.active',
     queue: 'll.syncQueue', sync: 'll.syncMeta', timer: 'll.timer',
     plan: 'll.plan', appliedPlans: 'll.appliedPlans', connections: 'll.connections', weighIns: 'll.weighIns',
+    nowSent: 'll.nowSent',
   };
   function load(key, fallback) {
     try { const v = localStorage.getItem(key); return v == null ? fallback : JSON.parse(v); }
@@ -322,7 +323,7 @@
       const changed = JSON.stringify(j) !== JSON.stringify(coachPlan);
       coachPlan = j; save(KEYS.plan, coachPlan);
       const applied = applyPlan();
-      if (changed || applied) safeRender();
+      if (changed || applied) { safeRender(); postNow(); }
     } catch (e) {
       ui.planError = e.message;   // keep the last plan we had
     }
@@ -461,6 +462,7 @@
     fetchPlan(manual);
     fetchConnections(manual);
     fetchWeighIn(manual);
+    postNow();
     if (syncing || !queue.length) return;
     if (!settings.syncUrl) { if (manual) toast('Add the sync URL in Settings first'); return; }
     syncing = true; refreshSyncUi();
@@ -486,6 +488,69 @@
     syncing = false;
     if (manual && ok && !queue.length) toast(`Synced ${ok} change${ok > 1 ? 's' : ''} to Drive`);
     refreshSyncUi();
+    if (ok) postNow();
+  }
+
+  // ---------- "Lift Log Now": a summary Claude can read anywhere ----------
+  // Claude's Drive connector (chat, phone, voice) can read Google Docs but not this app's data, so the app sends a
+  // plain-English plan (the next 8 days, current weights, the coach's notes, the last session) for the sync script
+  // to write into the Google Doc "Lift Log Now". Sent when it changes, and at least once a day the app is opened.
+  function sessionSummary(s) {
+    if (s.status === 'skipped') return `${sessionTitle(s)} skipped${s.skipReason ? ` (${s.skipReason})` : ''}`;
+    if (s.type === 'lift') return `${sessionTitle(s)}: ${s.exercises.map(exSummary).join('; ')}${s.rpe ? `; intensity ${s.rpe}/10` : ''} (${s.status})`;
+    const c = s.cardio || {};
+    return `${sessionTitle(s)}: ${c.minutes != null ? `${c.minutes} min` : 'done'}${s.type === 'hiit' && c.plannedRounds ? `, ${c.roundsCompleted}/${c.plannedRounds} rounds, hard ${hardDetail(c)}` : ''}${s.rpe ? `; intensity ${s.rpe}/10` : ''} (${s.status})`;
+  }
+  function nowDoc() {
+    const lines = [], add = (t, text) => lines.push({ t, text: String(text) });
+    const today = ui.today, st = progression();
+    add('h1', 'Lift Log Now');
+    add('p', `Written by Brad's Lift Log app on ${fmtShort(today)} at ${fmtTime(nowIso())}${tz() ? ` (${tz()})` : ''}. Days are listed by date, `
+      + `so work out "today" and "tomorrow" from the actual date. If this wasn't written today, sessions done since then aren't shown.`);
+    if (typeof coachPlan.note === 'string' && coachPlan.note) {
+      const since = coachPlan.updatedAt && !isNaN(Date.parse(coachPlan.updatedAt)) ? ` (coach plan from ${fmtShort(ymd(new Date(coachPlan.updatedAt)))})` : '';
+      add('p', `Coach's note${since}: ${coachPlan.note}`);
+    }
+    add('h2', 'Plan by day');
+    let exactWeights = true;      // only the next lifting session's weights are certain; later ones depend on it
+    for (let n = 0; n < 8; n++) {
+      const date = addDays(today, n), planned = plannedType(date);
+      const done = sessions.filter(s => s.date === date).sort(bySessionTime);
+      const open = Object.values(drafts).filter(d => d.date === date && !d._editing);
+      add('h3', `${fmtShort(date)}${n === 0 ? ' (the day this was written)' : ''}: ${TYPE_LABEL[planned]}${weekOf(date) ? `, program week ${weekOf(date)}` : ''}`);
+      done.forEach(s => add('li', `Done: ${sessionSummary(s)}`));
+      open.forEach(d => add('li', `In progress: ${sessionTitle(d)}`));
+      if (!['lift', 'walk', 'hiit'].includes(planned) || done.concat(open).some(s => s.type === planned)) continue;
+      if (planned === 'lift') {
+        const w = workoutFor(date), lifts = P.workouts[w];
+        add('li', exactWeights
+          ? `Planned: Workout ${w}, ${P.sets}×${P.reps}: ${lifts.map(l => `${P.lifts[l].name} ${fmtW(st[l].weight)} kg`).join(', ')}`
+          : `Planned: Workout ${w}: ${lifts.map(l => P.lifts[l].name).join(', ')} (weights depend on how the previous lifting session goes)`);
+        exactWeights = false;
+        lifts.forEach(l => { const o = coachPlan.lifts && coachPlan.lifts[l]; if (o && typeof o.note === 'string' && o.note) add('li', `Coach on ${P.lifts[l].name}: ${o.note}`); });
+      } else {
+        const s = newSession(date, planned);
+        add('li', `Planned: ${planLines(s).join('; ')}${planned === 'hiit' ? `; planned hard rounds: ${hardDetail(s.cardio)}` : ''}`);
+        const o = coachPlan[planned];
+        if (o && typeof o.note === 'string' && o.note) add('li', `Coach: ${o.note}`);
+      }
+    }
+    add('h2', 'Current working weights');
+    Object.keys(P.lifts).forEach(l => add('li', `${P.lifts[l].name}: ${fmtW(st[l].weight)} kg${st[l].failStreak ? ` (${st[l].failStreak} failed session${st[l].failStreak > 1 ? 's' : ''} in a row)` : ''}`));
+    const last = sessions.filter(s => s.status !== 'skipped').sort(bySessionTime).pop();
+    if (last) { add('h2', 'Last session'); add('p', `${fmtShort(last.date)}: ${sessionSummary(last)}`); }
+    return lines;
+  }
+  let nowSending = false;
+  async function postNow() {
+    if (!settings.syncUrl || !settings.syncToken || !navigator.onLine || nowSending) return;
+    const doc = nowDoc(), key = JSON.stringify(doc.slice(2));     // everything but the "written at" line
+    const last = load(KEYS.nowSent, {});
+    if (last.key === key && last.date === ui.today) return;
+    nowSending = true;
+    try { await post({ action: 'now', doc }); save(KEYS.nowSent, { key, date: ui.today }); }
+    catch (e) { /* offline, or the sync script hasn't been updated yet: try again next time */ }
+    finally { nowSending = false; }
   }
   function syncBadge(id) {
     const m = syncMeta[id] || {};

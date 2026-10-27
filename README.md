@@ -111,6 +111,16 @@ Edit `program.js`, bump `version` (e.g. `SL5x5-v2`) and bump `CACHE` in `sw.js` 
 The phone picks up the new version the next time the app is opened twice.
 Quick switches such as deadlift 1×5, the deadlift increment, micro-plates, HIIT rounds and rest times are in the app's Settings; you don't need to edit code for those.
 
+### Updating the script for "Lift Log Now" (v1.5)
+
+1. In the Lift Log Sheet: **Extensions → Apps Script**, open **Code.gs**, and replace it with the latest `apps-script/Code.gs` from this repo.
+   Keep your own `SYNC_TOKEN` value on line 11. Click **Save**.
+2. Choose **setupNowDoc** in the function dropdown and click **Run**. Google asks for one new permission (Google Docs):
+   **Review permissions** → your account → **Advanced → Go to Lift Log (unsafe) → Allow**. This creates the **Lift Log Now** doc next to the Sheet.
+3. **Deploy → Manage deployments →** edit (pencil) **→ Version: New version → Deploy**. The URL stays the same.
+4. Open Lift Log on the phone; within a moment the doc fills in. Then add a line to your Claude profile preferences,
+   e.g. *"For my training plan, read the Google Doc 'Lift Log Now'."*
+
 ## Data written to Drive
 
 | Where | Contents |
@@ -119,6 +129,7 @@ Quick switches such as deadlift 1×5, the deadlift increment, micro-plates, HIIT
 | Sheet → **Sets** | One row per set: planned/actual weight, target/actual reps, result (done/failed/not_done), effort (easy/hard), time logged |
 | Sheet → **State** | Current next working weight and failure streak for each lift |
 | `lift-log.json` | Full history in one file, with a description of the fields, for the Claude project |
+| Google Doc **Lift Log Now** | Plain-English plan for Claude in chat and voice (its Drive connector reads Docs, not the app's data): the next 8 days by date (planned session, exact weights for the next lifting day, the coach's notes, what's been done), current working weights and the last session. Sent by the app (v1.5) when it changes, and at least once a day it's opened |
 | Sheet → **Weight** | One row per Withings weigh-in (via Home Assistant): date, time (Perth), weight_kg, fat_pct, muscle_kg, timestamp (UTC, used to avoid duplicates) |
 | `withings-weight.json` | All weigh-ins plus a `daily` series (first reading of each Perth day = the morning weigh-in), with a field description |
 | Sheet → **Blood Pressure** | One row per reading (Omron, via Home Assistant): date, time (Perth local, when measured), systolic, diastolic (mmHg), source |
