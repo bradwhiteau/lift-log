@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '1.5.1';
+  const APP_VERSION = '1.6.0';
   const P = window.PROGRAM;
   const $ = (sel, el = document) => el.querySelector(sel);
 
@@ -671,6 +671,7 @@
   function render() {
     if (ui.reloadPending && !ui.modal) { location.reload(); return; }
     ui.renderPending = false;
+    document.body.dataset.view = ui.view;
     document.querySelectorAll('.tabs [data-view]').forEach(b => b.classList.toggle('on', b.dataset.view === ui.view));
     const app = $('#app');
     app.innerHTML = ui.view === 'history' ? renderHistory() : ui.view === 'settings' ? renderSettings() : renderDay();
@@ -1402,6 +1403,49 @@
 
   // ---------- events ----------
   document.addEventListener('pointerdown', unlockAudio, { passive: true });
+  // ---------- swipe between days ----------
+  // Swipe sideways on Today to change day (same feel as Meal Planner). The ‹ › buttons stay as the visible way.
+  let swipe = null, eatClick = false;
+  document.addEventListener('pointerdown', e => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    eatClick = false;
+    if (ui.modal || ui.view !== 'today' || e.clientX < 24 || e.clientX > innerWidth - 24) return; // leave screen edges to the phone's back gesture
+    if (!e.target.closest('#app') || e.target.closest('input, textarea, select')) return;
+    swipe = { el: $('#app'), x: e.clientX, y: e.clientY, active: false };
+  });
+  document.addEventListener('pointermove', e => {
+    if (!swipe) return;
+    const dx = e.clientX - swipe.x, dy = e.clientY - swipe.y;
+    if (!swipe.active) {
+      if (Math.abs(dy) > 12 && Math.abs(dy) > Math.abs(dx)) { swipe = null; return; } // it's a scroll
+      if (Math.abs(dx) < 12) return;
+      swipe.active = true;
+    }
+    swipe.el.style.transition = 'none';
+    swipe.el.style.transform = `translateX(${dx * 0.35}px)`;
+  });
+  function endSwipe(e) {
+    const sw = swipe; swipe = null;
+    if (!sw || !sw.active) return;
+    eatClick = true;
+    const dx = e && e.type === 'pointerup' ? e.clientX - sw.x : 0, el = sw.el;
+    el.style.transition = 'transform .16s ease, opacity .16s ease';
+    if (Math.abs(dx) > 70) {
+      const d = dx < 0 ? 1 : -1;
+      el.style.transform = `translateX(${-d * 60}px)`; el.style.opacity = '0';
+      setTimeout(() => {
+        ui.date = addDays(ui.date, d); render();
+        el.style.transition = 'none'; el.style.transform = `translateX(${d * 60}px)`;
+        void el.offsetWidth;
+        el.style.transition = 'transform .18s ease, opacity .18s ease'; el.style.transform = ''; el.style.opacity = '';
+      }, 160);
+    } else el.style.transform = '';
+  }
+  document.addEventListener('pointerup', endSwipe);
+  document.addEventListener('pointercancel', () => endSwipe(null));
+  // A swipe shouldn't also count as a tap (e.g. on a set button).
+  document.addEventListener('click', e => { if (eatClick) { eatClick = false; e.stopPropagation(); e.preventDefault(); } }, true);
+
   document.addEventListener('click', e => {
     const el = e.target.closest('[data-action]');
     if (el && !el.disabled && actions[el.dataset.action]) {
