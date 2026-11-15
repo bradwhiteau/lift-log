@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '1.5.0';
+  const APP_VERSION = '1.5.1';
   const P = window.PROGRAM;
   const $ = (sel, el = document) => el.querySelector(sel);
 
@@ -751,7 +751,22 @@
     return s.type === 'lift' ? liftEditor(s, readOnly) : cardioEditor(s, readOnly);
   }
 
+  // Comments on a saved session, editable right on the edit screen (a skipped session's comment is its reason).
+  function editNotes(s) {
+    if (!s._editing) return '';
+    return s.status === 'skipped'
+      ? `<article class="card form">${field('Reason skipped', `<textarea data-text="skipReason" rows="2" placeholder="e.g. sick, travel, work ran late">${esc(s.skipReason || '')}</textarea>`)}</article>`
+      : `<article class="card form">${field('Notes', `<textarea data-text="notes" rows="3" placeholder="How did it feel? Anything to flag?">${esc(s.notes || '')}</textarea>`)}</article>`;
+  }
+
   function draftActions(s, finishLabel) {
+    if (s._editing && s.status === 'skipped') {
+      return `<div class="actions">
+        <button class="btn primary" data-action="save-skipped-edit">Save changes</button>
+        <button class="btn" data-action="finish">Log as done instead</button>
+        <button class="btn" data-action="discard">Cancel edit</button>
+      </div>`;
+    }
     return `<div class="actions">
       <button class="btn primary" data-action="finish">${s._editing ? 'Save changes' : finishLabel}</button>
       ${s._editing ? `<button class="btn" data-action="discard">Cancel edit</button>` :
@@ -800,7 +815,7 @@
     });
     if (!readOnly) {
       h += `<p class="hint">Tap a set: ✓ easy → ✓ hard → ✗ failed. Rest ${fmtSecs(settings.rest.easy)} / ${fmtSecs(settings.rest.hard)} / ${fmtSecs(settings.rest.failed)}.</p>
-        ${draftActions(s, 'Finish workout')}`;
+        ${editNotes(s)}${draftActions(s, 'Finish workout')}`;
     }
     return h + '</section>';
   }
@@ -820,7 +835,7 @@
       const note = s._editing ? 'Editing a saved session.'
         : s.backfilled ? 'Logged after the fact, so no start/end times.'
         : `Started ${fmtShort(s.date)}${s.startedAt ? ` at ${fmtTime(s.startedAt)}` : ''} but never finished.`;
-      h += `<p class="muted">${note}</p>` + plan + draftActions(s, 'Log session');
+      h += `<p class="muted">${note}</p>` + plan + (s._editing ? editNotes(s) : '') + draftActions(s, 'Log session');
     } else if (s.guide) {
       const paused = !!s.guide.pausedAt;
       h += `<p class="muted">Started ${fmtTime(s.startedAt)}</p>
@@ -1270,6 +1285,12 @@
       if (!reason) return toast('Add a short reason');
       Object.assign(s, { status: 'skipped', skipReason: reason, rpe: null, startedAt: null });
       if (s.type === 'lift') s.exercises.forEach(e => e.sets.forEach(x => Object.assign(x, { result: null, effort: null, reps: null, at: null })));
+      finalize(s);
+    },
+    'save-skipped-edit'() {
+      const s = editing(), reason = (s.skipReason || '').trim();
+      if (!reason) return toast('Add a short reason');
+      s.skipReason = reason;
       finalize(s);
     },
     'close-modal'() { closeModal(); },
